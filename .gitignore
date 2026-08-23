@@ -8,3 +8,4 @@ __pycache__/
 .idea/
 .vscode/
 config.py
+ghp_*
