@@ -7,3 +7,4 @@ __pycache__/
 *.tar.gz
 .idea/
 .vscode/
+config.py
