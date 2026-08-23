@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Настройки</h2>
+{% if message %}
+<div class="alert alert-{{ message[0] }}">{{ message[1] }}</div>
+{% endif %}
+<form method="POST">
+    <h5>Подключение к биллингу</h5>
+    <div class="row">
+        <div class="col-md-6 mb-3">
+            <label>Хост БД биллинга</label>
+            <input type="text" name="billing_host" class="form-control" value="{{ billing_host }}">
+        </div>
+        <div class="col-md-2 mb-3">
+            <label>Порт</label>
+            <input type="number" name="billing_port" class="form-control" value="{{ billing_port }}">
+        </div>
+        <div class="col-md-4 mb-3">
+            <label>Пользователь</label>
+            <input type="text" name="billing_user" class="form-control" value="{{ billing_user }}">
+        </div>
+    </div>
+    <div class="row">
+        <div class="col-md-4 mb-3">
+            <label>Пароль</label>
+            <input type="password" name="billing_password" class="form-control" value="{{ billing_password }}">
+        </div>
+        <div class="col-md-4 mb-3">
+            <label>Имя БД</label>
+            <input type="text" name="billing_db" class="form-control" value="{{ billing_db }}">
+        </div>
+    </div>
+
+    <h5 class="mt-4">SQL-запрос адреса</h5>
+    <div class="mb-3">
+        <textarea name="billing_query" class="form-control" rows="6">{{ billing_query }}</textarea>
+    </div>
+
+    <h5 class="mt-4">Безопасность</h5>
+    <div class="mb-3">
+        <label for="allowed_ips">Разрешённые IP-адреса (через запятую)</label>
+        <textarea name="allowed_ips" class="form-control" rows="3" placeholder="Например: 192.168.1.10, 192.168.1.0/24">{{ allowed_ips }}</textarea>
+        <div class="form-text">
+            Оставьте пустым, чтобы разрешить доступ со всех IP. Можно указывать отдельные IP или подсети (CIDR).
+        </div>
+    </div>
+
+    <h5 class="mt-4">Автоматический опрос</h5>
+    <div class="form-check mb-2">
+        <input type="checkbox" class="form-check-input" id="auto_poll_enabled" name="auto_poll_enabled" value="True" {% if auto_poll_enabled %}checked{% endif %}>
+        <label class="form-check-label" for="auto_poll_enabled">
+            Включить ежедневный автоматический опрос
+        </label>
+    </div>
+    <div class="row mb-3">
+        <div class="col-md-3">
+            <label>Время опроса</label>
+            <input type="time" name="auto_poll_time" class="form-control" value="{{ auto_poll_time }}">
+        </div>
+    </div>
+
+    <h5 class="mt-4">SNMP</h5>
+    <div class="form-check mb-3">
+        <input type="checkbox" class="form-check-input" id="snmp_auto_scan" name="snmp_auto_scan" value="True" {% if snmp_auto_scan %}checked{% endif %}>
+        <label class="form-check-label" for="snmp_auto_scan">
+            Включить автоматический SNMP-сбор при открытии страницы
+        </label>
+    </div>
+
+    <h5 class="mt-4">Мониторинг доступности</h5>
+    <div class="form-check mb-2">
+        <input type="checkbox" class="form-check-input" id="monitoring_enabled" name="monitoring_enabled" value="True" {% if monitoring_enabled %}checked{% endif %}>
+        <label class="form-check-label" for="monitoring_enabled">
+            Включить мониторинг доступности устройств
+        </label>
+    </div>
+    <div class="row mb-3">
+        <div class="col-md-3">
+            <label for="monitoring_interval" class="form-label">Интервал проверки (секунд)</label>
+            <input type="number" class="form-control" id="monitoring_interval" name="monitoring_interval" value="{{ monitoring_interval }}" min="10" step="5">
+        </div>
+    </div>
+
+    <button type="submit" class="btn btn-primary">Сохранить и перезапустить</button>
+</form>
+{% endblock %}

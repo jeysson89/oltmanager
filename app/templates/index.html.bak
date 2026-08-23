@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h2 class="mb-0">Устройства</h2>
+    <button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#deviceModal" data-mode="add" data-device-id="">
+        <i class="fas fa-plus"></i> Добавить устройство
+    </button>
+</div>
+
+<!-- Модальное окно добавления/редактирования -->
+<div class="modal fade" id="deviceModal" tabindex="-1" aria-labelledby="deviceModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="POST" action="{{ url_for('main.add_device') }}" id="deviceForm">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="deviceModalLabel">Добавить устройство</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" name="device_id" id="deviceId">
+                    <div class="mb-3">
+                        <label for="name" class="form-label">Имя</label>
+                        <input type="text" class="form-control" id="name" name="name" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="ip" class="form-label">IP-адрес</label>
+                        <input type="text" class="form-control" id="ip" name="ip" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="username" class="form-label">Логин</label>
+                        <input type="text" class="form-control" id="username" name="username" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="password" class="form-label">Пароль</label>
+                        <div class="input-group">
+                            <input type="password" class="form-control" id="password" name="password" required>
+                            <button class="btn btn-outline-secondary" type="button" onclick="togglePassword('password', this)">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="enable_password" class="form-label">Пароль enable</label>
+                        <div class="input-group">
+                            <input type="password" class="form-control" id="enable_password" name="enable_password">
+                            <button class="btn btn-outline-secondary" type="button" onclick="togglePassword('enable_password', this)">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="device_type" class="form-label">Тип устройства</label>
+                        <select class="form-select" id="device_type" name="device_type">
+                            <option value="epon">EPON</option>
+                            <option value="gpon">GPON</option>
+                            <option value="vsol">VSOL</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-primary">Сохранить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Список устройств -->
+<div class="row g-3">
+    {% for device in devices %}
+    <div class="col-xl-3 col-lg-4 col-md-6 col-sm-12">
+        <div class="card h-100 shadow-sm">
+            <div class="card-body py-3 px-3">
+                <div class="d-flex justify-content-between align-items-start mb-2">
+                    <h5 class="card-title mb-0 text-truncate">{{ device.name }}</h5>
+                    <span class="badge {% if device.device_type == 'gpon' %}bg-danger{% elif device.device_type == 'vsol' %}bg-info{% else %}bg-primary{% endif %}">
+                        {{ device.device_type|upper }}
+                    </span>
+                </div>
+                <p class="text-muted small mb-2">
+                    <i class="fas fa-network-wired me-1"></i> {{ device.ip }}
+                </p>
+                {% if device.description %}
+                <p class="text-muted small mb-2">{{ device.description }}</p>
+                {% endif %}
+                <div class="d-flex gap-2 mt-2">
+                    <a href="{{ url_for('main.device_view', device_id=device.id) }}" class="btn btn-sm btn-outline-primary flex-fill" title="Открыть">
+                        <i class="fas fa-folder-open"></i> Открыть
+                    </a>
+                    <button class="btn btn-sm btn-outline-warning flex-fill" 
+                            data-bs-toggle="modal" 
+                            data-bs-target="#deviceModal" 
+                            data-mode="edit" 
+                            data-device-id="{{ device.id }}"
+                            data-name="{{ device.name }}"
+                            data-ip="{{ device.ip }}"
+                            data-username="{{ device.username }}"
+                            data-password="{{ device.password }}"
+                            data-enable-password="{{ device.enable_password }}"
+                            data-device-type="{{ device.device_type }}"
+                            title="Редактировать">
+                        <i class="fas fa-edit"></i> Изменить
+                    </button>
+                    <form method="POST" action="{{ url_for('main.delete_device', device_id=device.id) }}" class="flex-fill m-0">
+                        <button type="submit" class="btn btn-sm btn-outline-danger w-100" title="Удалить" onclick="return confirm('Удалить устройство {{ device.name }}?')">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<script>
+    // Функция переключения видимости пароля
+    function togglePassword(fieldId, button) {
+        const field = document.getElementById(fieldId);
+        const icon = button.querySelector('i');
+        if (field.type === 'password') {
+            field.type = 'text';
+            icon.classList.remove('fa-eye');
+            icon.classList.add('fa-eye-slash');
+        } else {
+            field.type = 'password';
+            icon.classList.remove('fa-eye-slash');
+            icon.classList.add('fa-eye');
+        }
+    }
+
+    // Обработка открытия модального окна
+    const deviceModal = document.getElementById('deviceModal');
+    deviceModal.addEventListener('show.bs.modal', function (event) {
+        const button = event.relatedTarget;
+        const mode = button.getAttribute('data-mode');
+        const deviceId = button.getAttribute('data-device-id');
+        const form = document.getElementById('deviceForm');
+        const modalTitle = document.getElementById('deviceModalLabel');
+        
+        if (mode === 'edit') {
+            modalTitle.textContent = 'Редактировать устройство';
+            form.action = "{{ url_for('main.edit_device', device_id=0) }}".replace('0', deviceId);
+            document.getElementById('deviceId').value = deviceId;
+            document.getElementById('name').value = button.getAttribute('data-name');
+            document.getElementById('ip').value = button.getAttribute('data-ip');
+            document.getElementById('username').value = button.getAttribute('data-username');
+            document.getElementById('password').value = button.getAttribute('data-password');
+            document.getElementById('enable_password').value = button.getAttribute('data-enable-password');
+            document.getElementById('device_type').value = button.getAttribute('data-device-type');
+        } else {
+            modalTitle.textContent = 'Добавить устройство';
+            form.action = "{{ url_for('main.add_device') }}";
+            document.getElementById('deviceId').value = '';
+            document.getElementById('name').value = '';
+            document.getElementById('ip').value = '';
+            document.getElementById('username').value = '';
+            document.getElementById('password').value = '';
+            document.getElementById('enable_password').value = '';
+            document.getElementById('device_type').value = 'epon';
+        }
+    });
+</script>
+{% endblock %}

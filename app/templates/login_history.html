@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>История входов</h2>
+
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card text-white bg-primary">
+            <div class="card-body py-2">
+                <h6 class="card-title">Сегодня</h6>
+                <p class="card-text display-6">{{ stats.today }}</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-white bg-success">
+            <div class="card-body py-2">
+                <h6 class="card-title">За неделю</h6>
+                <p class="card-text display-6">{{ stats.week }}</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-white bg-warning">
+            <div class="card-body py-2">
+                <h6 class="card-title">За месяц</h6>
+                <p class="card-text display-6">{{ stats.month }}</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-white bg-danger">
+            <div class="card-body py-2">
+                <h6 class="card-title">За год</h6>
+                <p class="card-text display-6">{{ stats.year }}</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<table class="table table-striped table-sm">
+    <thead>
+        <tr>
+            <th>Дата/Время</th>
+            <th>Пользователь</th>
+            <th>IP-адрес</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for rec in records %}
+        <tr>
+            <td>{{ rec.timestamp.strftime('%d.%m.%Y %H:%M:%S') }}</td>
+            <td>{{ rec.username }}</td>
+            <td>{{ rec.ip_address }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Добавить пользователя</h2>
+{% if error %}
+<div class="alert alert-danger">{{ error }}</div>
+{% endif %}
+<form method="POST">
+    <div class="mb-3">
+        <label class="form-label">Имя пользователя</label>
+        <input type="text" name="username" class="form-control" required>
+    </div>
+    <div class="mb-3">
+        <label class="form-label">Пароль</label>
+        <input type="password" name="password" class="form-control" required>
+    </div>
+    <div class="mb-3 form-check">
+        <input type="checkbox" class="form-check-input" name="is_admin" id="is_admin">
+        <label class="form-check-label" for="is_admin">Администратор</label>
+    </div>
+    <button type="submit" class="btn btn-primary">Создать</button>
+    <a href="{{ url_for('main.user_list') }}" class="btn btn-secondary">Отмена</a>
+</form>
+{% endblock %}

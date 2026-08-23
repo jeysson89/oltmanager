@@ -1,0 +1,24 @@
+/* Компактные карточки устройств */
+.card { margin-bottom: 0.5rem; }
+.card-body { padding: 0.5rem; }
+.card-header { padding: 0.5rem 1rem; }
+
+/* Компактная таблица */
+.table-sm td, .table-sm th {
+    padding: 0.25rem 0.5rem !important;
+    white-space: nowrap;
+    font-size: 0.875rem;
+}
+.table-sm td:nth-child(4) {
+    white-space: normal;
+    word-break: break-word;
+    max-width: 200px;
+}
+
+/* Цвета сигнала с максимальным приоритетом */
+td.signal-green  { color: #28a745 !important; font-weight: bold !important; }
+td.signal-yellow { color: #ffc107 !important; font-weight: bold !important; }
+td.signal-red    { color: #dc3545 !important; font-weight: bold !important; }
+
+/* Кнопки в таблице */
+.btn-sm { font-size: 0.75rem; padding: 0.15rem 0.4rem; }

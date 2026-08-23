@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>История сигналов: EPON {{ interface }}:{{ onu }}</h2>
+<p>Устройство: {{ device.name }} ({{ device.ip }})</p>
+
+{% if diff is not none %}
+<div class="alert {% if diff > 0 %}alert-success{% elif diff < 0 %}alert-danger{% else %}alert-info{% endif %}">
+    Изменение сигнала: {{ '%+.2f'|format(diff) }} dBm (последние 2 измерения)
+</div>
+{% endif %}
+
+<table class="table table-striped table-sm">
+    <thead>
+        <tr>
+            <th>Дата/Время</th>
+            <th>Signal (dBm)</th>
+            <th>Temp (°C)</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for h in history %}
+        <tr>
+            <td>{{ h.scanned_at.strftime('%d.%m.%Y %H:%M:%S') if h.scanned_at else '' }}</td>
+            <td>
+                <span class="{% if h.signal_db > -25 %}text-success{% elif h.signal_db >= -30 %}text-warning{% else %}text-danger{% endif %} fw-bold">
+                    {{ h.signal_db }}
+                </span>
+            </td>
+            <td>{{ h.temperature }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<a href="{{ url_for('main.signal_stats', device_id=device.id) }}" class="btn btn-secondary">← Назад к статистике</a>
+{% endblock %}

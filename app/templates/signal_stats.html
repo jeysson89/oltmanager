@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Статистика сигналов: {{ device.name }} ({{ device.ip }})</h2>
+
+<style>
+.signal-trend-up { color: #28a745; }
+.signal-trend-down { color: #dc3545; }
+.signal-trend-stable { color: #6c757d; }
+.mini-chart { 
+    display: flex; 
+    align-items: flex-end; 
+    gap: 2px; 
+    height: 30px; 
+    width: 100px;
+    padding: 2px;
+    background: #f8f9fa;
+    border-radius: 3px;
+}
+.mini-chart-bar {
+    flex: 1;
+    min-height: 2px;
+    border-radius: 1px;
+    background: #28a745;
+    transition: height 0.3s;
+}
+.mini-chart-bar.warning { background: #ffc107; }
+.mini-chart-bar.danger { background: #dc3545; }
+tr.row-danger { background-color: #fff5f5 !important; }
+tr.row-danger:hover { background-color: #ffe0e0 !important; }
+tr.row-improved { background-color: #f0fff0 !important; }
+tr.row-improved:hover { background-color: #e0ffe0 !important; }
+tr.row-new { background-color: #f0f8ff !important; }
+tr.row-new:hover { background-color: #e0f0ff !important; }
+</style>
+
+{% if not signals %}
+<div class="alert alert-info">Нет данных. Выполните опрос устройства для сбора статистики.</div>
+{% else %}
+<table class="table table-striped table-sm">
+    <thead>
+        <tr>
+            <th>Порт</th>
+            <th>ONU</th>
+            <th>MAC ONU</th>
+            <th>Адрес</th>
+            <th>Signal (dBm)</th>
+            <th>Тренд</th>
+            <th>Temp (°C)</th>
+            <th>Последний опрос</th>
+            <th>График (20 замеров)</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for s in signals %}
+        {% set trend_data = get_trend(device.id, s.interface, s.onu_id, s.signal_db) %}
+        <tr class="
+            {% if trend_data.trend == 'down' and trend_data.diff >= 2 %}row-danger
+            {% elif trend_data.trend == 'up' and trend_data.diff >= 2 %}row-improved
+            {% elif trend_data.is_new %}row-new
+            {% endif %}
+        ">
+            <td>{{ s.interface }}</td>
+            <td>{{ s.onu_id }}</td>
+            <td class="small">{{ s.mac_onu }}</td>
+            <td class="small">{{ s.address }}</td>
+            <td>
+                <span class="{% if s.signal_db > -25 %}text-success{% elif s.signal_db >= -30 %}text-warning{% else %}text-danger{% endif %} fw-bold">
+                    {{ s.signal_db }}
+                </span>
+            </td>
+            <td>
+                {% if trend_data.trend == 'up' %}
+                    <span class="signal-trend-up" title="Улучшился на {{ trend_data.diff }} dBm">▲ {{ trend_data.diff }}</span>
+                {% elif trend_data.trend == 'down' %}
+                    <span class="signal-trend-down" title="Ухудшился на {{ trend_data.diff }} dBm">▼ {{ trend_data.diff }}</span>
+                {% else %}
+                    <span class="signal-trend-stable" title="Без изменений">► {{ trend_data.diff }}</span>
+                {% endif %}
+            </td>
+            <td>{{ s.temperature }}</td>
+            <td class="small">{{ s.scanned_at.strftime('%d.%m.%Y %H:%M') if s.scanned_at else '' }}</td>
+            <td>
+                <div class="mini-chart">
+                    {% for bar in trend_data.history %}
+                        {% set height = (bar + 35) / 25 * 100 if bar else 0 %}
+                        {% if height > 100 %}{% set height = 100 %}{% endif %}
+                        {% if height < 5 %}{% set height = 5 %}{% endif %}
+                        <div class="mini-chart-bar {% if bar <= -30 %}danger{% elif bar <= -25 %}warning{% endif %}" 
+                             style="height: {{ height }}%" 
+                             title="{{ bar }} dBm"></div>
+                    {% endfor %}
+                </div>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<div class="mt-3">
+    <span class="badge bg-light text-dark me-2">Легенда:</span>
+    <span class="badge" style="background-color: #fff5f5; color: #dc3545; border: 1px solid #dc3545;">▼ Ухудшение > 2 dBm</span>
+    <span class="badge" style="background-color: #f0fff0; color: #28a745; border: 1px solid #28a745;">▲ Улучшение > 2 dBm</span>
+    <span class="badge" style="background-color: #f0f8ff; color: #0d6efd; border: 1px solid #0d6efd;">● Новый ONU</span>
+</div>
+{% endif %}
+{% endblock %}
