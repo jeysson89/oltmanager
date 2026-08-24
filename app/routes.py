@@ -514,6 +514,41 @@ def reboot_onu(device_id, interface, onu):
     success, message = olt.reboot_onu(interface, onu)
     olt.disconnect()
     return jsonify({'status': 'ok' if success else 'error', 'message': message})
+@main.route('/api/device/<int:device_id>/bulk_reboot', methods=['POST'])
+@login_required
+def bulk_reboot(device_id):
+    data = request.get_json()
+    interface = data.get('interface')
+    onu_ids = data.get('onus', [])
+    device = Device.query.get_or_404(device_id)
+    olt = _get_device_connection(device)
+    if not olt.connect():
+        return jsonify({'status': 'error', 'message': 'Ошибка подключения к OLT'}), 500
+    results = []
+    for onu in onu_ids:
+        success, msg = olt.reboot_onu(interface, onu)
+        results.append({'onu': onu, 'success': success, 'message': msg})
+    olt.disconnect()
+    return jsonify({'status': 'ok', 'results': results})
+
+
+@main.route('/api/device/<int:device_id>/bulk_delete', methods=['POST'])
+@login_required
+def bulk_delete(device_id):
+    data = request.get_json()
+    interface = data.get('interface')
+    onu_ids = data.get('onus', [])
+    device = Device.query.get_or_404(device_id)
+    olt = _get_device_connection(device)
+    if not olt.connect():
+        return jsonify({'status': 'error', 'message': 'Ошибка подключения к OLT'}), 500
+    results = []
+    for onu in onu_ids:
+        success, msg = olt.delete_onu(interface, onu)
+        results.append({'onu': onu, 'success': success, 'message': msg})
+    olt.disconnect()
+    return jsonify({'status': 'ok', 'results': results})
+
 
 @main.route('/api/device/<int:device_id>/delete/<path:interface>/<onu>')
 @login_required

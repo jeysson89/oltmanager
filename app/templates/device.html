@@ -46,12 +46,19 @@
                 <button class="btn btn-sm btn-info scan-btn" data-interface="{{ intf }}" title="Опросить">
                     <i class="fas fa-sync"></i> Опросить
                 </button>
+                <button class="btn btn-sm btn-outline-success bulk-reboot-btn" data-interface="{{ intf }}" title="Перезагрузить выбранные">
+                    <i class="fas fa-sync-alt"></i> Перезагрузить выбранные
+                </button>
+                <button class="btn btn-sm btn-outline-danger bulk-delete-btn" data-interface="{{ intf }}" title="Удалить выбранные">
+                    <i class="fas fa-trash"></i> Удалить выбранные
+                </button>
             </div>
         </div>
         <div class="card-body p-0" id="body-epon{{ intf.replace('/', '_') }}" style="display: none;">
             <table class="table table-striped table-sm mb-0">
                 <thead>
                     <tr>
+                        <th><input type="checkbox" class="select-all-check" onclick="toggleSelectAll(this)"></th>
                         <th>Port</th>
                         <th>Status</th>
                         <th>MAC ONU/SN</th>
@@ -286,6 +293,7 @@ function renderCachedData(intf, data) {
         
         const row = document.createElement('tr');
         row.innerHTML = `
+            <td><input type="checkbox" class="onu-check" data-onu="${onu}"></td>
             <td>${fullIf}</td>
             <td>${status}</td>
             <td>${onuMac.startsWith('HWTC') ? onuMac : formatMac(onuMac)}</td>
@@ -535,5 +543,68 @@ function showSignalChart(history) {
     
     modal.show();
 }
+
+// Массовые операции
+function toggleSelectAll(checkbox) {
+    const cardBody = checkbox.closest('.card-body');
+    const checkboxes = cardBody.querySelectorAll('.onu-check');
+    checkboxes.forEach(cb => cb.checked = checkbox.checked);
+}
+
+async function bulkAction(deviceId, interface, action) {
+    const card = document.querySelector(`#card-epon${interface.replace('/', '_')}`);
+    const checkboxes = card.querySelectorAll('.onu-check:checked');
+    const onus = Array.from(checkboxes).map(cb => cb.dataset.onu);
+    if (onus.length === 0) {
+        showToast('Выберите хотя бы один ONU', 'warning');
+        return;
+    }
+    if (action === 'reboot' && !confirm(`Перезагрузить ONU: ${onus.join(', ')}?`)) return;
+    if (action === 'delete' && !confirm(`Удалить ONU: ${onus.join(', ')}? Это необратимо!`)) return;
+    
+    const url = `/api/device/${deviceId}/bulk_${action}`;
+    try {
+        const resp = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ interface: interface, onus: onus })
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        if (data.status === 'ok') {
+            let successCount = 0;
+            data.results.forEach(r => {
+                if (r.success) successCount++;
+                showToast(`ONU ${r.onu}: ${r.message}`, r.success ? 'success' : 'error');
+            });
+            showToast(`Успешно: ${successCount} из ${onus.length}`, 'success');
+            // Обновляем таблицу после удаления
+            if (action === 'delete') {
+                // Удаляем выбранные строки
+                checkboxes.forEach(cb => {
+                    const tr = cb.closest('tr');
+                    if (tr) tr.remove();
+                });
+            }
+        } else {
+            showToast(data.message, 'error');
+        }
+    } catch(e) { showToast('Ошибка: ' + e.message, 'error'); }
+}
+
+// Обработчики кнопок массовых операций
+document.querySelectorAll('.bulk-reboot-btn').forEach(btn => {
+    btn.addEventListener('click', function() {
+        const interface = this.dataset.interface;
+        bulkAction(deviceId, interface, 'reboot');
+    });
+});
+
+document.querySelectorAll('.bulk-delete-btn').forEach(btn => {
+    btn.addEventListener('click', function() {
+        const interface = this.dataset.interface;
+        bulkAction(deviceId, interface, 'delete');
+    });
+});
 </script>
 {% endblock %}
