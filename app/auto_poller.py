@@ -147,19 +147,20 @@ class AutoPoller:
             cursor.close()
             conn.close()
             
-            # Опрашиваем сигналы для каждого ONU
+            # Опрашиваем сигналы для каждого ONU (даже если сигнал недоступен)
             for onu_id in onu_macs:
                 info = olt.get_onu_info(interface, onu_id)
-                if info and info.get('signal'):
-                    conn = connect(host='localhost', user='oltuser', password='oltpassword', database='oltmanager')
-                    cursor = conn.cursor()
-                    cursor.execute("""
-                        INSERT INTO onu_signal_history (device_id, interface, onu_id, mac_onu, address, signal_db, temperature)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    """, (device.id, interface, onu_id, onu_macs.get(onu_id, ''), addresses.get(onu_id, ''), info['signal'], info.get('temperature')))
-                    conn.commit()
-                    cursor.close()
-                    conn.close()
+                signal = info.get('signal') if info else None
+                temperature = info.get('temperature') if info else None
+                conn = connect(host='localhost', user='oltuser', password='oltpassword', database='oltmanager')
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO onu_signal_history (device_id, interface, onu_id, mac_onu, address, signal_db, temperature)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """, (device.id, interface, onu_id, onu_macs.get(onu_id, ''), addresses.get(onu_id, ''), signal, temperature))
+                conn.commit()
+                cursor.close()
+                conn.close()
             
             print(f"[AUTO] [{device.name}] Completed {interface}", file=sys.stderr)
         except Exception as e:

@@ -70,7 +70,7 @@ def get_trend(device_id, interface, onu_id, current_signal):
         cursor.close()
         conn.close()
         
-        history = [row[0] for row in rows]
+        history = [row[0] for row in rows if row[0] is not None]
         history.reverse()
         
         is_new = len(history) <= 1
@@ -308,6 +308,19 @@ def scan_interface(device_id, interface):
         cache_key = f"{device_id}:{interface}"
         _vsol_cache_global.pop(cache_key, None)
     
+    # Собираем сигналы ДО отключения (иначе данные не получить)
+    signals_data = {}
+    if isinstance(result_data, dict) and 'onu_macs' in result_data:
+        onu_list = result_data['onu_macs']
+    else:
+        onu_list = result_data[1]
+    for onu_id in onu_list:
+        info = olt.get_onu_info(interface, onu_id)
+        if info:
+            signals_data[onu_id] = info
+        else:
+            signals_data[onu_id] = None
+
     olt.disconnect()
 
     if isinstance(result_data, dict) and 'onu_macs' in result_data:
@@ -359,8 +372,57 @@ def scan_interface(device_id, interface):
     except Exception as e:
         print(f"Cache save error: {e}", file=sys.stderr)
 
+    # Сохраняем сигналы для всех ONU (используем собранные до disconnect данные)
+    try:
+        from pymysql import connect
+        conn = connect(host='localhost', user='oltuser', password='oltpassword', database='oltmanager')
+        cursor = conn.cursor()
+        for onu_id, mac_data in onu_macs.items():
+            info = signals_data.get(onu_id)
+            signal = info.get('signal') if info else None
+            temperature = info.get('temperature') if info else None
+            mac = mac_data if isinstance(mac_data, str) else (mac_data.get('mac') or mac_data.get('sn') or '')
+            address = addresses.get(onu_id, '')
+            cursor.execute("""
+                INSERT INTO onu_signal_history (device_id, interface, onu_id, mac_onu, address, signal_db, temperature)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """, (device_id, interface, onu_id, mac, address, signal, temperature))
+        conn.commit()
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        print(f"Signal history save error: {e}", file=sys.stderr)
+
     return jsonify(result)
 
+
+@main.route('/api/device/<int:device_id>/signal_history/<path:interface>/<onu>')
+@login_required
+def signal_history(device_id, interface, onu):
+    from pymysql import connect
+    try:
+        conn = connect(host='localhost', user='oltuser', password='oltpassword', database='oltmanager')
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT signal_db, temperature, scanned_at
+            FROM onu_signal_history
+            WHERE device_id = %s AND interface = %s AND onu_id = %s
+            ORDER BY scanned_at DESC
+            LIMIT 50
+        """, (device_id, interface, onu))
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        history = []
+        for row in reversed(rows):
+            history.append({
+                'signal': row[0],
+                'temperature': row[1],
+                'time': row[2].strftime('%d.%m.%Y %H:%M') if row[2] else ''
+            })
+        return jsonify({'status': 'ok', 'history': history})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 @main.route('/api/device/<int:device_id>/info/<path:interface>/<onu>')
 @login_required
 def onu_info(device_id, interface, onu):
@@ -551,23 +613,19 @@ def signal_stats(device_id):
         sql = """
             SELECT t1.interface, t1.onu_id, t1.mac_onu, t1.address, t1.signal_db, t1.temperature, t1.scanned_at
             FROM onu_signal_history t1
-            INNER JOIN (
-                SELECT device_id, interface, onu_id, MAX(scanned_at) as max_scan
-                FROM onu_signal_history
-                WHERE device_id = %s
+            WHERE t1.device_id = %s
+            AND t1.scanned_at = (
+                SELECT MAX(t2.scanned_at) FROM onu_signal_history t2
+                WHERE t2.device_id = t1.device_id AND t2.interface = t1.interface AND t2.onu_id = t1.onu_id
+            )
         """
         params = [device_id]
-        
+
         if filter_interface:
-            sql += " AND interface = %s"
+            sql += " AND t1.interface = %s"
             params.append(filter_interface)
-        
-        sql += """
-                GROUP BY device_id, interface, onu_id
-            ) t2 ON t1.device_id = t2.device_id AND t1.interface = t2.interface AND t1.onu_id = t2.onu_id AND t1.scanned_at = t2.max_scan
-            ORDER BY t1.interface, CAST(t1.onu_id AS UNSIGNED)
-        """
-        
+
+        sql += " ORDER BY t1.interface, CAST(t1.onu_id AS UNSIGNED)"
         cursor.execute(sql, params)
         
         signals = []
@@ -585,6 +643,9 @@ def signal_stats(device_id):
         for s in signals:
             trend = get_trend(device_id, s['interface'], s['onu_id'], s.get('signal_db') or 0)
             s['priority'] = trend['priority']
+            # Если сигнала нет, ставим приоритет 0 (вниз)
+            if s.get('signal_db') is None:
+                s['priority'] = 0
         signals.sort(key=lambda x: (-x['priority'], x['interface'], int(x['onu_id']) if x['onu_id'].isdigit() else 0))
         
         cursor.close()

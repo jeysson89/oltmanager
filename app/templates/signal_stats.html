@@ -64,8 +64,8 @@ tr.row-new:hover { background-color: #e0f0ff !important; }
             <td class="small">{{ s.mac_onu }}</td>
             <td class="small">{{ s.address }}</td>
             <td>
-                <span class="{% if s.signal_db > -25 %}text-success{% elif s.signal_db >= -30 %}text-warning{% else %}text-danger{% endif %} fw-bold">
-                    {{ s.signal_db }}
+                <span class="{% if s.signal_db is not none and s.signal_db > -25 %}text-success{% elif s.signal_db is not none and s.signal_db >= -30 %}text-warning{% else %}text-danger{% endif %} fw-bold">
+                    {{ s.signal_db if s.signal_db is not none else '—' }}
                 </span>
             </td>
             <td>

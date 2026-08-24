@@ -9,6 +9,21 @@
 
 <div id="toast-container" style="position: fixed; top: 20px; right: 20px; z-index: 9999;"></div>
 
+<!-- Модальное окно для графика сигнала -->
+<div class="modal fade" id="signalChartModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">График сигнала</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <canvas id="signalChart" height="200"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div id="interfacesContainer">
     {% for intf in interfaces %}
     <div class="card mb-2" id="card-epon{{ intf.replace('/', '_') }}">
@@ -220,6 +235,9 @@ function renderCachedData(intf, data) {
                 <button class="btn btn-sm btn-outline-danger resetBtn" data-interface="${intf}" data-onu="${onu}" title="Сброс ONU">
                     <i class="fas fa-power-off"></i>
                 </button>
+                <button class="btn btn-sm btn-outline-info chartBtn" data-interface="${intf}" data-onu="${onu}" title="График сигнала">
+                    <i class="fas fa-chart-line"></i>
+                </button>
             </td>
         `;
         tbody.appendChild(row);
@@ -290,6 +308,26 @@ function bindButtonHandlers(tbody) {
                 showToast(data.message, data.status === 'ok' ? 'success' : 'error');
             } catch(e) { showToast('Ошибка сети: ' + e.message, 'error'); }
             this.disabled = false; this.innerHTML = '<i class="fas fa-power-off"></i>';
+        });
+    });
+    
+    // График сигнала
+    tbody.querySelectorAll('.chartBtn').forEach(b => {
+        b.addEventListener('click', async function() {
+            const iface = this.dataset.interface;
+            const onu = this.dataset.onu;
+            this.disabled = true; this.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+            try {
+                const resp = await fetch(`/api/device/${deviceId}/signal_history/${iface}/${onu}`);
+                if (!resp.ok) { throw new Error(`HTTP ${resp.status}`); }
+                const data = await resp.json();
+                if (data.status === 'ok' && data.history.length > 0) {
+                    showSignalChart(data.history);
+                } else {
+                    showToast('Нет данных для графика', 'warning');
+                }
+            } catch(e) { showToast('Ошибка: ' + e.message, 'error'); }
+            this.disabled = false; this.innerHTML = '<i class="fas fa-chart-line"></i>';
         });
     });
 }
@@ -365,5 +403,41 @@ function fallbackCopy(text) {
     document.body.removeChild(textArea);
 }
 
+
+function showSignalChart(history) {
+    const modal = new bootstrap.Modal(document.getElementById('signalChartModal'));
+    const ctx = document.getElementById('signalChart').getContext('2d');
+    
+    if (window.signalChartInstance) {
+        window.signalChartInstance.destroy();
+    }
+    
+    const labels = history.map(h => h.time);
+    const signals = history.map(h => h.signal);
+    
+    window.signalChartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Сигнал (dBm)',
+                data: signals,
+                borderColor: '#28a745',
+                backgroundColor: 'rgba(40, 167, 69, 0.1)',
+                tension: 0.3,
+                fill: true
+            }]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: { title: { display: true, text: 'dBm' } },
+                x: { title: { display: true, text: 'Время' } }
+            }
+        }
+    });
+    
+    modal.show();
+}
 </script>
 {% endblock %}
