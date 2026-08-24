@@ -9,3 +9,4 @@ __pycache__/
 .vscode/
 config.py
 ghp_*
+*.bak
