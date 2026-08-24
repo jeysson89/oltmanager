@@ -343,12 +343,14 @@ class OLTConnection:
         cmd = f'show mac address-table interface {interface}'
         raw = self.send_command(cmd)
         macs = []
-        vlan = None
+        vlans = []
         for line in raw.splitlines():
             mac_match = re.search(r'([0-9a-fA-F]{4}\.[0-9a-fA-F]{4}\.[0-9a-fA-F]{4})', line)
             if mac_match:
                 parts = line.split()
-                if parts and parts[0].isdigit():
-                    vlan = parts[0]
+                # В выводе формат: Vlan Mac Address Type Ports
+                # parts[0] - vlan
+                vlan = parts[0] if parts and parts[0].isdigit() else ''
                 macs.append(mac_match.group(1))
-        return {'macs': macs, 'vlan': vlan}
+                vlans.append(vlan)
+        return {'macs': macs, 'vlans': vlans}

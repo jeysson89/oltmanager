@@ -283,13 +283,21 @@ function bindButtonHandlers(tbody) {
                 const resp = await fetch(`/api/device/${deviceId}/vsol_mac/${iface}/${onu}`);
                 const data = await resp.json();
                 if (data.status === 'ok') {
-                    if (data.macs && macCell) {
-                        macCell.textContent = data.macs.map(formatMac).join(', ');
+                    if (data.macs && data.macs.length > 0) {
+                        let macHtml = '';
+                        let vlanHtml = '';
+                        data.macs.forEach((mac, index) => {
+                            macHtml += `<div>${formatMac(mac)}</div>`;
+                            let vlan = (Array.isArray(data.vlan) ? data.vlan[index] : data.vlan) || '';
+                            vlanHtml += `<div>${vlan}</div>`;
+                        });
+                        if (macCell) macCell.innerHTML = macHtml;
+                        if (vlanCell) vlanCell.innerHTML = vlanHtml;
                         const macToCopy = formatMac(data.macs[0]);
                         copyToClipboard(macToCopy);
-                    }
-                    if (data.vlan && vlanCell) {
-                        vlanCell.textContent = data.vlan;
+                    } else {
+                        if (macCell) macCell.textContent = 'Нет MAC';
+                        if (vlanCell) vlanCell.textContent = '-';
                     }
                     showToast(data.message, 'success');
                 } else {

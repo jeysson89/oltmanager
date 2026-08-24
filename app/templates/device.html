@@ -363,10 +363,20 @@ function bindButtonHandlers(tbody) {
                 if (!resp.ok) { throw new Error(`HTTP ${resp.status}`); }
                 const data = await resp.json();
                 if (data.status === 'ok') {
-                    if (macCell) macCell.textContent = Array.isArray(data.macs) ? data.macs.map(formatMac).join(', ') : formatMac(data.macs);
-                    if (vlanCell) vlanCell.textContent = data.vlan || '';
-                    if (data.macs.length > 0) {
+                    if (data.macs && data.macs.length > 0) {
+                        let macHtml = '';
+                        let vlanHtml = '';
+                        data.macs.forEach((mac, index) => {
+                            macHtml += `<div>${formatMac(mac)}</div>`;
+                            let vlan = (Array.isArray(data.vlan) ? data.vlan[index] : data.vlan) || '';
+                            vlanHtml += `<div>${vlan}</div>`;
+                        });
+                        if (macCell) macCell.innerHTML = macHtml;
+                        if (vlanCell) vlanCell.innerHTML = vlanHtml;
                         copyToClipboard(formatMac(data.macs[0]));
+                    } else {
+                        if (macCell) macCell.textContent = 'Нет MAC';
+                        if (vlanCell) vlanCell.textContent = '-';
                     }
                 } else { showToast(data.message, 'error'); }
             } catch(e) { showToast('Ошибка сети: ' + e.message, 'error'); }

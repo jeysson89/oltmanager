@@ -502,7 +502,7 @@ def get_mac(device_id, interface, onu):
     olt.disconnect()
     if not result:
         return jsonify({'status': 'error', 'message': 'Нет данных'}), 500
-    return jsonify({'status': 'ok', 'macs': result.get('macs', []), 'vlan': result.get('vlan')})
+    return jsonify({'status': 'ok', 'macs': result.get('macs', []), 'vlan': result.get('vlans', [])})
 
 @main.route('/api/device/<int:device_id>/reboot/<path:interface>/<onu>')
 @login_required
