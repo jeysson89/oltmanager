@@ -514,6 +514,19 @@ def reboot_onu(device_id, interface, onu):
     success, message = olt.reboot_onu(interface, onu)
     olt.disconnect()
     return jsonify({'status': 'ok' if success else 'error', 'message': message})
+@main.route('/api/device/<int:device_id>/running_config/<path:interface>/<onu>')
+@login_required
+def running_config(device_id, interface, onu):
+    device = Device.query.get_or_404(device_id)
+    olt = _get_device_connection(device)
+    if not olt.connect():
+        return jsonify({'status': 'error', 'message': 'Ошибка подключения к OLT'}), 500
+    config = olt.get_running_config(interface, onu)
+    olt.disconnect()
+    if config is None:
+        return jsonify({'status': 'error', 'message': 'Не удалось получить конфигурацию'}), 500
+    return jsonify({'status': 'ok', 'config': config})
+
 @main.route('/api/device/<int:device_id>/bulk_reboot', methods=['POST'])
 @login_required
 def bulk_reboot(device_id):

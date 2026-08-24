@@ -66,6 +66,19 @@ class OLTConnection:
         print(f"[TELNET] Response for '{cmd}':\n{clean[:500]}...", file=sys.stderr)
         return clean
 
+    def get_running_config(self, interface, onu_id):
+        """Получает running-config для конкретного ONU."""
+        full_if = f"EPON{interface}:{onu_id}"
+        cmd = f"show running-config interface {full_if}"
+        print(f"[TELNET] Getting running-config: {cmd}", file=sys.stderr)
+        try:
+            raw = self.send_command(cmd)
+            # Очистим лишние строки, если нужно
+            return raw
+        except Exception as e:
+            print(f"[TELNET] Error getting config: {e}", file=sys.stderr)
+            return None
+
     def reboot_onu(self, interface, onu_id):
         full_if = f"epon{interface}:{onu_id}"
         cmd = f"epon reboot onu interface EPON {interface}:{onu_id}"

@@ -23,6 +23,20 @@
         </div>
     </div>
 </div>
+<!-- Модальное окно для конфигурации -->
+<div class="modal fade" id="configModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Running Config</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <pre id="configOutput" style="background: #f8f9fa; padding: 10px; max-height: 400px; overflow: auto;"></pre>
+            </div>
+        </div>
+    </div>
+</div>
 
 <div id="interfacesContainer">
     {% for intf in interfaces %}
@@ -245,6 +259,9 @@ function renderCachedData(intf, data) {
                 <button class="btn btn-sm btn-outline-info chartBtn" data-interface="${intf}" data-onu="${onu}" title="График сигнала">
                     <i class="fas fa-chart-line"></i>
                 </button>
+                <button class="btn btn-sm btn-outline-secondary configBtn" data-interface="${intf}" data-onu="${onu}" title="Config ONT">
+                    <i class="fas fa-cog"></i>
+                </button>
             </td>
         `;
         tbody.appendChild(row);
@@ -335,6 +352,28 @@ function bindButtonHandlers(tbody) {
                 }
             } catch(e) { showToast('Ошибка: ' + e.message, 'error'); }
             this.disabled = false; this.innerHTML = '<i class="fas fa-chart-line"></i>';
+        });
+    });
+    
+    // Config ONT
+    tbody.querySelectorAll('.configBtn').forEach(b => {
+        b.addEventListener('click', async function() {
+            const iface = this.dataset.interface;
+            const onu = this.dataset.onu;
+            this.disabled = true; this.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+            try {
+                const resp = await fetch(`/api/device/${deviceId}/running_config/${iface}/${onu}`);
+                if (!resp.ok) { throw new Error(`HTTP ${resp.status}`); }
+                const data = await resp.json();
+                if (data.status === 'ok') {
+                    document.getElementById('configOutput').textContent = data.config;
+                    const modal = new bootstrap.Modal(document.getElementById('configModal'));
+                    modal.show();
+                } else {
+                    showToast(data.message, 'error');
+                }
+            } catch(e) { showToast('Ошибка: ' + e.message, 'error'); }
+            this.disabled = false; this.innerHTML = '<i class="fas fa-cog"></i>';
         });
     });
 }

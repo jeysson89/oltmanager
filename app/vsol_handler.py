@@ -316,6 +316,18 @@ class VSOLConnection:
             return 'Link-Down'
         return 'Link-Down'
 
+    def get_running_config(self, interface, onu_id):
+        """Получает running-config для конкретного VSOL ONU."""
+        full_if = f"EPON{interface}:{onu_id}"
+        cmd = f"show running-config interface {full_if}"
+        print(f"[VSOL] Getting running-config: {cmd}", file=sys.stderr)
+        try:
+            raw = self.send_command(cmd)
+            return raw
+        except Exception as e:
+            print(f"[VSOL] Error getting config: {e}", file=sys.stderr)
+            return None
+
     def reboot_onu(self, interface, onu_id):
         full_if = f"EPON{interface}:{onu_id}"
         try:
