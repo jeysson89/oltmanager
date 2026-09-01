@@ -655,5 +655,80 @@ document.querySelectorAll('.bulk-delete-btn').forEach(btn => {
         bulkAction(deviceId, interface, 'delete');
     });
 });
+
+// Очередь запросов к устройству
+const requestQueue = [];
+let isProcessing = false;
+let queueTaskCount = 0;
+
+function enqueueRequest(url, options) {
+    return new Promise((resolve, reject) => {
+        requestQueue.push({url, options, resolve, reject});
+        processQueue();
+    });
+}
+
+
+async function processQueue() {
+    if (isProcessing) return;
+    isProcessing = true;
+    showQueueIndicator();
+    while (requestQueue.length > 0) {
+        const task = requestQueue.shift();
+        updateQueueIndicator(`Выполняется: ${getTaskName(task.url)}`);
+        try {
+            const response = await originalFetch(task.url, task.options);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            task.resolve(response);
+        } catch (e) {
+            task.reject(e);
+        }
+    }
+    isProcessing = false;
+    hideQueueIndicator();
+}
+
+
+function getTaskName(url) {
+    if (url.includes('/mac/')) return 'Получение MAC-таблицы';
+    if (url.includes('/lan/')) return 'Проверка LAN';
+    if (url.includes('/reboot/')) return 'Перезагрузка ONU';
+    if (url.includes('/delete/')) return 'Удаление ONU';
+    if (url.includes('/set1g/')) return 'Настройка SLA';
+    if (url.includes('/blacklist/')) return 'Blacklist';
+    if (url.includes('/scan_interface/')) return 'Сканирование порта';
+    if (url.includes('/running_config/')) return 'Получение конфигурации';
+    if (url.includes('/signal_history/')) return 'Загрузка графика';
+    return 'Операция';
+}
+
+const queueIndicator = document.createElement('div');
+queueIndicator.id = 'queue-indicator';
+queueIndicator.style.cssText = 'position:fixed;bottom:20px;right:20px;background:#28a745;color:white;padding:10px 20px;border-radius:5px;box-shadow:0 2px 10px rgba(0,0,0,0.2);z-index:10000;display:none;font-size:14px;';
+document.body.appendChild(queueIndicator);
+
+function showQueueIndicator() {
+    queueIndicator.style.display = 'block';
+}
+
+function hideQueueIndicator() {
+    queueIndicator.style.display = 'none';
+}
+
+function updateQueueIndicator(text) {
+    queueIndicator.textContent = text;
+}
+
+// Переопределяем fetch для запросов к API устройства
+const originalFetch = window.fetch;
+window.fetch = function(url, options = {}) {
+    if (typeof url === 'string' && url.includes('/api/device/')) {
+        return enqueueRequest(url, options);
+    }
+    return originalFetch(url, options);
+};
+
 </script>
 {% endblock %}
