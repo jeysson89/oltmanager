@@ -514,6 +514,41 @@ def reboot_onu(device_id, interface, onu):
     success, message = olt.reboot_onu(interface, onu)
     olt.disconnect()
     return jsonify({'status': 'ok' if success else 'error', 'message': message})
+@main.route('/api/device/<int:device_id>/interface_shutdown', methods=['POST'])
+@login_required
+def interface_shutdown(device_id):
+    import threading, time
+    device = Device.query.get_or_404(device_id)
+    data = request.get_json()
+    interface = data.get('interface')
+    seconds = int(data.get('seconds', 10))
+    if not interface or seconds < 1:
+        return jsonify({'status': 'error', 'message': 'Некорректные параметры'}), 400
+    
+    olt = _get_device_connection(device)
+    if not olt.connect():
+        return jsonify({'status': 'error', 'message': 'Ошибка подключения'}), 500
+    
+    success, msg = olt.shutdown_interface(interface)
+    olt.disconnect()
+    
+    if not success:
+        return jsonify({'status': 'error', 'message': msg}), 500
+    
+    # Планируем включение через N секунд
+    def enable_later():
+        # Переподключаемся и включаем интерфейс
+        olt2 = _get_device_connection(device)
+        if olt2.connect():
+            olt2.enable_interface(interface)
+            olt2.disconnect()
+    
+    timer = threading.Timer(seconds, enable_later)
+    timer.daemon = True
+    timer.start()
+    
+    return jsonify({'status': 'ok', 'message': f'Интерфейс {interface} выключен, включится через {seconds} сек.'})
+
 @main.route('/api/device/<int:device_id>/running_config/<path:interface>/<onu>')
 @login_required
 def running_config(device_id, interface, onu):

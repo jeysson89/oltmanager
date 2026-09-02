@@ -79,6 +79,48 @@ class OLTConnection:
             print(f"[TELNET] Error getting config: {e}", file=sys.stderr)
             return None
 
+    def shutdown_interface(self, interface):
+        """Выключает интерфейс (shutdown)."""
+        full_if = f"EPON{interface}"
+        cmd = f"interface {full_if}"
+        print(f"[TELNET] Shutdown interface: {cmd}", file=sys.stderr)
+        try:
+            self.session.sendline('config')
+            self.session.expect(r'_config#', timeout=10)
+            self.session.sendline(cmd)
+            self.session.expect(r'_config_epon\d+/\d+#', timeout=10)
+            self.session.sendline('shutdown')
+            self.session.expect(r'_config_epon\d+/\d+#', timeout=10)
+            self.session.sendline('exit')
+            self.session.expect(r'_config#', timeout=10)
+            self.session.sendline('exit')
+            self.session.expect(r'#', timeout=10)
+            return True, f"Интерфейс {full_if} выключен"
+        except Exception as e:
+            print(f"[TELNET] Shutdown error: {e}", file=sys.stderr)
+            return False, f"Ошибка: {e}"
+
+    def enable_interface(self, interface):
+        """Включает интерфейс (no shutdown)."""
+        full_if = f"EPON{interface}"
+        cmd = f"interface {full_if}"
+        print(f"[TELNET] Enable interface: {cmd}", file=sys.stderr)
+        try:
+            self.session.sendline('config')
+            self.session.expect(r'_config#', timeout=10)
+            self.session.sendline(cmd)
+            self.session.expect(r'_config_epon\d+/\d+#', timeout=10)
+            self.session.sendline('no shutdown')
+            self.session.expect(r'_config_epon\d+/\d+#', timeout=10)
+            self.session.sendline('exit')
+            self.session.expect(r'_config#', timeout=10)
+            self.session.sendline('exit')
+            self.session.expect(r'#', timeout=10)
+            return True, f"Интерфейс {full_if} включен"
+        except Exception as e:
+            print(f"[TELNET] Enable error: {e}", file=sys.stderr)
+            return False, f"Ошибка: {e}"
+
     def reboot_onu(self, interface, onu_id):
         full_if = f"epon{interface}:{onu_id}"
         cmd = f"epon reboot onu interface EPON {interface}:{onu_id}"

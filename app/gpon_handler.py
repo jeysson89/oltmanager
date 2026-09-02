@@ -196,6 +196,48 @@ class GPONConnection:
             print(f"[GPON] Error getting config: {e}", file=sys.stderr)
             return None
 
+    def shutdown_interface(self, interface):
+        """Выключает GPON интерфейс."""
+        full_if = f"GPON{interface}"
+        cmd = f"interface {full_if}"
+        print(f"[GPON] Shutdown interface: {cmd}", file=sys.stderr)
+        try:
+            self.session.sendline('config')
+            self.session.expect(r'_config#', timeout=10)
+            self.session.sendline(cmd)
+            self.session.expect(r'_config_gpon\d+/\d+#', timeout=10)
+            self.session.sendline('shutdown')
+            self.session.expect(r'_config_gpon\d+/\d+#', timeout=10)
+            self.session.sendline('exit')
+            self.session.expect(r'_config#', timeout=10)
+            self.session.sendline('exit')
+            self.session.expect(r'#', timeout=10)
+            return True, f"Интерфейс {full_if} выключен"
+        except Exception as e:
+            print(f"[GPON] Shutdown error: {e}", file=sys.stderr)
+            return False, f"Ошибка: {e}"
+
+    def enable_interface(self, interface):
+        """Включает GPON интерфейс."""
+        full_if = f"GPON{interface}"
+        cmd = f"interface {full_if}"
+        print(f"[GPON] Enable interface: {cmd}", file=sys.stderr)
+        try:
+            self.session.sendline('config')
+            self.session.expect(r'_config#', timeout=10)
+            self.session.sendline(cmd)
+            self.session.expect(r'_config_gpon\d+/\d+#', timeout=10)
+            self.session.sendline('no shutdown')
+            self.session.expect(r'_config_gpon\d+/\d+#', timeout=10)
+            self.session.sendline('exit')
+            self.session.expect(r'_config#', timeout=10)
+            self.session.sendline('exit')
+            self.session.expect(r'#', timeout=10)
+            return True, f"Интерфейс {full_if} включен"
+        except Exception as e:
+            print(f"[GPON] Enable error: {e}", file=sys.stderr)
+            return False, f"Ошибка: {e}"
+
     def reboot_onu(self, interface, onu_id):
         full_if = f"gpon{interface}:{onu_id}"
         cmd = f"gpon reboot onu interface GPON {interface}:{onu_id}"

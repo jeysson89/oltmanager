@@ -23,6 +23,28 @@
         </div>
     </div>
 </div>
+<!-- Модальное окно для выключения интерфейса -->
+<div class="modal fade" id="shutdownModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Выключить интерфейс</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>Интерфейс <strong id="shutdownInterface"></strong> будет выключен. Укажите время в секундах, через которое он автоматически включится.</p>
+                <div class="mb-3">
+                    <label for="shutdownSeconds" class="form-label">Секунды до включения</label>
+                    <input type="number" class="form-control" id="shutdownSeconds" value="10" min="1" max="3600">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="button" class="btn btn-danger" id="confirmShutdown">Отключить</button>
+            </div>
+        </div>
+    </div>
+</div>
 <!-- Модальное окно для конфигурации -->
 <div class="modal fade" id="configModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-lg">
@@ -52,7 +74,9 @@
                     {{ cached_data[intf].onu_macs|length }} ONU
                 </span>
                 {% endif %}
-            </span>
+            <button class="btn btn-sm btn-outline-danger shutdown-btn" data-interface="{{ intf }}" title="Выключить интерфейс" onclick="event.stopPropagation()">
+                    <i class="fas fa-power-off"></i> Выкл
+                </button></span>
             <div onclick="event.stopPropagation()">
                 <a href="{{ url_for('main.signal_stats', device_id=device.id) }}?interface={{ intf }}" class="btn btn-sm btn-outline-secondary me-2" title="Статистика сигналов EPON {{ intf }}">
                     <i class="fas fa-chart-bar"></i>
@@ -60,6 +84,7 @@
                 <button class="btn btn-sm btn-info scan-btn" data-interface="{{ intf }}" title="Опросить">
                     <i class="fas fa-sync"></i> Опросить
                 </button>
+                
                 <button class="btn btn-sm btn-outline-success bulk-reboot-btn" data-interface="{{ intf }}" title="Перезагрузить выбранные">
                     <i class="fas fa-sync-alt"></i> Перезагрузить
                 </button>
@@ -730,5 +755,40 @@ window.fetch = function(url, options = {}) {
     return originalFetch(url, options);
 };
 
+
+// Обработчик кнопки "Выкл"
+document.querySelectorAll('.shutdown-btn').forEach(btn => {
+    btn.addEventListener('click', function() {
+        const interface = this.dataset.interface;
+        document.getElementById('shutdownInterface').textContent = interface;
+        const modal = new bootstrap.Modal(document.getElementById('shutdownModal'));
+        modal.show();
+        document.getElementById('confirmShutdown').onclick = async function() {
+            const seconds = parseInt(document.getElementById('shutdownSeconds').value);
+            if (!seconds || seconds < 1) {
+                showToast('Введите корректное количество секунд', 'warning');
+                return;
+            }
+            this.disabled = true;
+            try {
+                const resp = await fetch(`/api/device/${deviceId}/interface_shutdown`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ interface: interface, seconds: seconds })
+                });
+                const data = await resp.json();
+                if (data.status === 'ok') {
+                    showToast(data.message, 'success');
+                    modal.hide();
+                } else {
+                    showToast(data.message, 'error');
+                }
+            } catch(e) {
+                showToast('Ошибка: ' + e.message, 'error');
+            }
+            this.disabled = false;
+        };
+    });
+});
 </script>
 {% endblock %}
