@@ -17,6 +17,7 @@
             <div class="navbar-nav ms-auto">
                 {% if current_user.is_authenticated %}
                     {% if current_user.is_admin %}
+                    <a class="nav-link" href="{{ url_for('main.clients') }}">Клиенты</a>
                     <a class="nav-link" href="{{ url_for('main.login_history') }}"><i class="fas fa-history"></i> История</a>
                     <a class="nav-link" href="{{ url_for('main.user_list') }}">Пользователи</a>
                     <a class="nav-link" href="{{ url_for('main.settings') }}">Настройки</a>

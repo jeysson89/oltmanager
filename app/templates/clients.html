@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Клиенты</h2>
+
+<div class="card mb-3">
+    <div class="card-header py-2">Добавить клиента</div>
+    <div class="card-body py-2">
+        <form method="POST" action="{{ url_for('main.add_client') }}">
+            <div class="row g-2 align-items-center">
+                <div class="col-md-3 d-flex align-items-center">
+                    <label class="form-label small mb-0 me-2">MAC-адрес</label>
+                    <input type="text" class="form-control form-control-sm" name="mac" placeholder="XX:XX:XX:XX:XX:XX" required>
+                </div>
+                <div class="col-md-5 d-flex align-items-center">
+                    <label class="form-label small mb-0 me-2">Название организации</label>
+                    <input type="text" class="form-control form-control-sm" name="name" placeholder="ООО Ромашка" required>
+                </div>
+                <div class="col-md-2 d-flex align-items-center">
+                    <button type="submit" class="btn btn-success btn-sm">Добавить</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<table class="table table-striped table-sm">
+    <thead>
+        <tr>
+            <th>MAC</th>
+            <th>Название</th>
+            <th>Действия</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for client in clients %}
+        <tr>
+            <td>{{ client.mac }}</td>
+            <td>{{ client.name }}</td>
+            <td>
+                <button class="btn btn-sm btn-warning edit-client-btn" data-id="{{ client.id }}" data-mac="{{ client.mac }}" data-name="{{ client.name }}" title="Редактировать">
+                    <i class="fas fa-edit"></i>
+                </button>
+                <form method="POST" action="{{ url_for('main.delete_client', client_id=client.id) }}" class="d-inline">
+                    <button type="submit" class="btn btn-sm btn-danger" title="Удалить" onclick="return confirm('Удалить клиента?')">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<!-- Модальное окно редактирования -->
+<div class="modal fade" id="editClientModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="POST" id="editClientForm">
+                <div class="modal-header">
+                    <h5 class="modal-title">Редактировать клиента</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">MAC</label>
+                        <input type="text" class="form-control" id="editClientMac" readonly>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Название</label>
+                        <input type="text" class="form-control" id="editClientName" required>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-primary">Сохранить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+document.querySelectorAll('.edit-client-btn').forEach(btn => {
+    btn.addEventListener('click', function() {
+        const id = this.dataset.id;
+        const mac = this.dataset.mac;
+        const name = this.dataset.name;
+        document.getElementById('editClientMac').value = mac;
+        document.getElementById('editClientName').value = name;
+        document.getElementById('editClientForm').action = `/clients/edit/${id}`;
+        new bootstrap.Modal(document.getElementById('editClientModal')).show();
+    });
+});
+</script>
+{% endblock %}

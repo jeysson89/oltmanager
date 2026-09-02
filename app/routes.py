@@ -347,7 +347,20 @@ def scan_interface(device_id, interface):
         if address:
             addresses[onu_id] = address
         else:
-            addresses[onu_id] = 'Удалён или не внесён'
+            # Ищем в базе клиентов
+            client_name = None
+            if isinstance(mac_data, str):
+                from app.billing import get_client_name_from_mac
+                client_name = get_client_name_from_mac(mac_data)
+            elif isinstance(mac_data, dict):
+                mac = mac_data.get('mac', '')
+                if mac:
+                    from app.billing import get_client_name_from_mac
+                    client_name = get_client_name_from_mac(mac)
+            if client_name:
+                addresses[onu_id] = client_name
+            else:
+                addresses[onu_id] = 'Удалён или не внесён'
 
     result = {
         'status': 'ok',
@@ -832,6 +845,55 @@ class Config:
 def restart():
     print("Перезагрузка сервера по запросу администратора...", file=sys.stderr)
     os._exit(0)
+
+# ---------- Клиенты ----------
+@main.route('/clients')
+@login_required
+def clients():
+    from app.models import Client
+    clients = Client.query.order_by(Client.name).all()
+    return render_template('clients.html', clients=clients)
+
+@main.route('/clients/add', methods=['POST'])
+@login_required
+def add_client():
+    from app.models import Client
+    mac = request.form.get('mac', '').strip()
+    name = request.form.get('name', '').strip()
+    if not mac or not name:
+        return redirect(url_for('main.clients'))
+    # Нормализуем MAC
+    import re
+    cleaned = re.sub(r'[^0-9a-fA-F]', '', mac).lower()
+    if len(cleaned) != 12:
+        return redirect(url_for('main.clients'))
+    # Проверяем дубликат
+    existing = Client.query.filter_by(mac=cleaned).first()
+    if existing:
+        existing.name = name
+    else:
+        new_client = Client(mac=cleaned, name=name)
+        db.session.add(new_client)
+    db.session.commit()
+    return redirect(url_for('main.clients'))
+
+@main.route('/clients/edit/<int:client_id>', methods=['POST'])
+@login_required
+def edit_client(client_id):
+    from app.models import Client
+    client = Client.query.get_or_404(client_id)
+    client.name = request.form.get('name', '').strip()
+    db.session.commit()
+    return redirect(url_for('main.clients'))
+
+@main.route('/clients/delete/<int:client_id>', methods=['POST'])
+@login_required
+def delete_client(client_id):
+    from app.models import Client
+    client = Client.query.get_or_404(client_id)
+    db.session.delete(client)
+    db.session.commit()
+    return redirect(url_for('main.clients'))
 
 # ---------- Управление пользователями ----------
 @main.route('/users')

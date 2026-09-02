@@ -61,6 +61,21 @@ def get_address_from_billing(mac):
     print(f"[BILLING] No address found for MAC {mac}", file=sys.stderr)
     return None
 
+def get_client_name_from_mac(mac):
+    """Ищет название организации по MAC в таблице clients."""
+    from app.models import Client
+    cleaned = re.sub(r'[^0-9a-fA-F]', '', mac).lower()
+    if len(cleaned) != 12:
+        return None
+    # Ищем в БД
+    try:
+        client = Client.query.filter_by(mac=cleaned).first()
+        if client:
+            return client.name
+    except Exception as e:
+        print(f"[CLIENT] Error searching client: {e}", file=sys.stderr)
+    return None
+
 def _get_address_by_sn(sn):
     """Поиск адреса по SN для GPON."""
     # Приводим SN к нижнему регистру без двоеточия

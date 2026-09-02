@@ -125,6 +125,12 @@ class AutoPoller:
                     address = get_address_from_billing(mac)
                     if address:
                         addresses[onu_id] = address
+                    else:
+                        # Ищем в базе клиентов
+                        from app.billing import get_client_name_from_mac
+                        client_name = get_client_name_from_mac(mac)
+                        if client_name:
+                            addresses[onu_id] = client_name
             
             result = {
                 'status': 'ok',

@@ -28,6 +28,11 @@ class Device(db.Model):
     device_type = db.Column(db.String(10), default='epon')  # 'epon' или 'gpon'
     sort_order = db.Column(db.Integer, default=0)  # порядок отображения
 
+class Client(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    mac = db.Column(db.String(20), unique=True, nullable=False, index=True)
+    name = db.Column(db.String(256), nullable=False)
+
 class LoginHistory(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(64), nullable=False)
