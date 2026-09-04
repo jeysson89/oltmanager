@@ -369,16 +369,16 @@ class OLTConnection:
         raw = self.send_command(cmd)
         statuses = {}
         macs = {}
+        # Более надёжный парсер: ищем EPON X/Y:Z и MAC в любом месте строки
         for line in raw.splitlines():
             line = line.strip()
-            if re.match(r'epon\d+/\d+:\d+', line, re.IGNORECASE):
-                parts = line.split()
-                if len(parts) >= 4:
-                    onu_id = parts[0].split(':')[-1]
-                    mac_candidate = parts[3] if len(parts) > 3 else ''
-                    if re.match(r'[0-9a-fA-F]{4}\.[0-9a-fA-F]{4}\.[0-9a-fA-F]{4}', mac_candidate):
-                        macs[onu_id] = mac_candidate
-                        statuses[f"{interface}:{onu_id}"] = "up"
+            # Ищем формат: EPON0/6:44  HWTC 11AF d05f.afd9.3033 ...
+            match = re.search(r'(EPON\d+/\d+:\d+)\s+(\S+)\s+(\S+)\s+([0-9a-fA-F]{4}\.[0-9a-fA-F]{4}\.[0-9a-fA-F]{4})', line, re.IGNORECASE)
+            if match:
+                onu_id = match.group(1).split(':')[-1]
+                mac = match.group(4)
+                macs[onu_id] = mac
+                statuses[f"{interface}:{onu_id}"] = "up"
         return statuses, macs
 
     def get_mac_table(self, interface):
