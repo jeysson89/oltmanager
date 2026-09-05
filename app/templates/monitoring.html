@@ -39,6 +39,35 @@
     </div>
 </div>
 
+<!-- Модальное окно для повторного запуска -->
+<div class="modal fade" id="restartMonitorModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Повторить мониторинг</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>Интерфейс: <strong id="restartInterface"></strong> ONU: <strong id="restartOnu"></strong></p>
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label for="restartDuration" class="form-label">Длительность (мин)</label>
+                        <input type="number" class="form-control" id="restartDuration" value="10" min="1" max="60">
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label for="restartInterval" class="form-label">Интервал (мин)</label>
+                        <input type="number" class="form-control" id="restartInterval" value="1" min="1" max="5">
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="button" class="btn btn-warning" id="confirmRestart">Запустить</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>
     let currentDeviceId = null;
     let currentTaskId = null;
@@ -79,6 +108,8 @@
                         <td>${remaining}</td>
                         <td>
                             ${task.status === 'done' ? `<button class="btn btn-sm btn-primary" onclick="showResult('${task.task_id}', ${task.device_id})">Результат</button>` : ''}
+                            ${task.status !== 'running' ? `<button class="btn btn-sm btn-warning" onclick="openRestartModal('${task.task_id}', ${task.device_id})">Повторить</button>` : ''}
+                            <button class="btn btn-sm btn-danger" onclick="deleteTask('${task.task_id}')">Удалить</button>
                         </td>
                     `;
                     tbody.appendChild(row);
@@ -116,10 +147,122 @@
             .catch(error => console.error('Ошибка получения результата:', error));
     }
 
+    // Повторный запуск
+    function openRestartModal(taskId, deviceId) {
+        fetch('/api/monitoring/tasks')
+            .then(response => response.json())
+            .then(data => {
+                const task = data.tasks.find(t => t.task_id === taskId);
+                if (!task) return;
+                document.getElementById('restartInterface').textContent = task.interface;
+                document.getElementById('restartOnu').textContent = task.onu_id;
+                document.getElementById('restartDuration').value = task.duration;
+                document.getElementById('restartInterval').value = task.interval;
+                document.getElementById('confirmRestart').onclick = function() {
+                    const duration = parseInt(document.getElementById('restartDuration').value);
+                    const interval = parseInt(document.getElementById('restartInterval').value);
+                    if (!duration || !interval) {
+                        alert('Введите корректные значения');
+                        return;
+                    }
+                    fetch(`/api/device/${deviceId}/monitor_start`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ interface: task.interface, onu_id: task.onu_id, duration: duration, interval: interval })
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.status === 'ok') {
+                            alert(data.message);
+                            updateMonitoringTable();
+                            const modal = bootstrap.Modal.getInstance(document.getElementById('restartMonitorModal'));
+                            modal.hide();
+                        } else {
+                            alert(data.message);
+                        }
+                    })
+                    .catch(error => alert('Ошибка: ' + error.message));
+                };
+                new bootstrap.Modal(document.getElementById('restartMonitorModal')).show();
+            })
+            .catch(error => alert('Ошибка получения задач: ' + error.message));
+    }
+
+    // Удаление задачи
+    function deleteTask(taskId) {
+        if (!confirm('Удалить задачу мониторинга?')) return;
+        fetch(`/api/monitor/delete/${taskId}`, { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'ok') {
+                    updateMonitoringTable();
+                } else {
+                    alert(data.message);
+                }
+            })
+            .catch(error => alert('Ошибка удаления: ' + error.message));
+    }
+
     // Обновляем таблицу каждые 3 секунды
     document.addEventListener('DOMContentLoaded', function() {
         updateMonitoringTable();
         setInterval(updateMonitoringTable, 3000);
     });
+
+    // Повторный запуск
+    function openRestartModal(taskId, deviceId) {
+        fetch('/api/monitoring/tasks')
+            .then(response => response.json())
+            .then(data => {
+                const task = data.tasks.find(t => t.task_id === taskId);
+                if (!task) return;
+                document.getElementById('restartInterface').textContent = task.interface;
+                document.getElementById('restartOnu').textContent = task.onu_id;
+                document.getElementById('restartDuration').value = task.duration;
+                document.getElementById('restartInterval').value = task.interval;
+                document.getElementById('confirmRestart').onclick = function() {
+                    const duration = parseInt(document.getElementById('restartDuration').value);
+                    const interval = parseInt(document.getElementById('restartInterval').value);
+                    if (!duration || !interval) {
+                        alert('Введите корректные значения');
+                        return;
+                    }
+                    fetch(`/api/device/${deviceId}/monitor_start`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ interface: task.interface, onu_id: task.onu_id, duration: duration, interval: interval })
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.status === 'ok') {
+                            alert(data.message);
+                            updateMonitoringTable();
+                            const modal = bootstrap.Modal.getInstance(document.getElementById('restartMonitorModal'));
+                            modal.hide();
+                        } else {
+                            alert(data.message);
+                        }
+                    })
+                    .catch(error => alert('Ошибка: ' + error.message));
+                };
+                new bootstrap.Modal(document.getElementById('restartMonitorModal')).show();
+            })
+            .catch(error => alert('Ошибка получения задач: ' + error.message));
+    }
+
+    // Удаление задачи
+    function deleteTask(taskId) {
+        if (!confirm('Удалить задачу мониторинга?')) return;
+        fetch(`/api/monitor/delete/${taskId}`, { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'ok') {
+                    updateMonitoringTable();
+                } else {
+                    alert(data.message);
+                }
+            })
+            .catch(error => alert('Ошибка удаления: ' + error.message));
+    }
 </script>
 {% endblock %}

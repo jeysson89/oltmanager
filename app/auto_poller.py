@@ -214,70 +214,78 @@ def get_all_monitor_tasks():
 # Глобальный словарь для активных задач (будем использовать только для потоков)
 _active_monitor_threads = {}
 
-def monitor_onu_worker(task_id, device, interface, onu_id, duration, interval):
-    """Фоновый процесс мониторинга ONU."""
-    import time
-    from app.billing import get_address_from_billing
-    from app.olt_handler import OLTConnection
-    from app.gpon_handler import GPONConnection
-    from app.vsol_handler import VSOLConnection
-    
-    task = onu_monitor_tasks[task_id]
-    # Добавляем имя и IP устройства для отображения
-    task['device_name'] = device.name
-    task['device_ip'] = device.ip
-    start_time = time.time()
-    end_time = start_time + duration * 60  # duration в минутах
-    
-    # Определяем тип соединения
-    if device.device_type == 'gpon':
-        conn_cls = GPONConnection
-    elif device.device_type == 'vsol':
-        conn_cls = VSOLConnection
-    else:
-        conn_cls = OLTConnection
-    
-    collected_data = []
-    
-    while time.time() < end_time and task['status'] == 'running':
-        # Создаём новое подключение к OLT
-        olt = conn_cls(device.ip, device.username, device.password, device.enable_password)
-        if olt.connect():
-            # Получаем статистику порта
-            stats = olt.get_port_statistics(interface, onu_id)
-            # Получаем информацию о сигнале
-            onu_info = olt.get_onu_info(interface, onu_id)
-            # Получаем состояние LAN
-            lan_state = olt.get_lan_state(interface, onu_id)
-            # Получаем MAC-таблицу
-            mac_data = olt.get_mac_table(f"EPON{interface}:{onu_id}")
-            
-            snapshot = {
-                'timestamp': time.time(),
-                'stats': stats,
-                'signal': onu_info.get('signal') if onu_info else None,
-                'temperature': onu_info.get('temperature') if onu_info else None,
-                'lan_state': lan_state,
-                'macs': mac_data.get('macs', []) if mac_data else [],
-                'vlan': mac_data.get('vlans', []) if mac_data else []
-            }
-            collected_data.append(snapshot)
-            olt.disconnect()
+def monitor_onu_worker(app, task_id, device_id, interface, onu_id, duration, interval):
+    """Фоновый процесс мониторинга ONU с сохранением в БД."""
+    import time, json
+    with app.app_context():
+        from app.models import MonitorTask, MonitorSnapshot, db, Device
+        from app.billing import get_address_from_billing
+        from app.olt_handler import OLTConnection
+        from app.gpon_handler import GPONConnection
+        from app.vsol_handler import VSOLConnection
+        
+        # Заново получаем устройство в контексте приложения
+        device = Device.query.get(device_id)
+        if not device:
+            return
+        
+        start_time = time.time()
+        end_time = start_time + duration * 60  # duration в минутах
+        
+        if device.device_type == 'gpon':
+            conn_cls = GPONConnection
+        elif device.device_type == 'vsol':
+            conn_cls = VSOLConnection
         else:
-            # Не удалось подключиться, добавляем пустую запись
-            collected_data.append({'timestamp': time.time(), 'error': 'connect_failed'})
+            conn_cls = OLTConnection
         
-        # Обновляем прогресс в задаче
-        task['data'] = collected_data
-        task['last_update'] = time.time()
+        collected_data = []
         
-        # Ждём интервал
-        time.sleep(interval * 60)  # interval в минутах
-    
-    # Формируем отчёт
-    result = analyze_onu_monitor_data(collected_data, interface, onu_id)
-    task['status'] = 'done'
-    task['result'] = result
+        while time.time() < end_time:
+            # Проверяем статус задачи (если остановлена – выходим)
+            task = MonitorTask.query.filter_by(task_id=task_id).first()
+            if not task or task.status == 'interrupted':
+                break
+            
+            # Создаём новое подключение к OLT
+            olt = conn_cls(device.ip, device.username, device.password, device.enable_password)
+            if olt.connect():
+                # Получаем статистику порта
+                stats = olt.get_port_statistics(interface, onu_id)
+                # Получаем информацию о сигнале
+                onu_info = olt.get_onu_info(interface, onu_id)
+                # Получаем состояние LAN
+                lan_state = olt.get_lan_state(interface, onu_id)
+                # Получаем MAC-таблицу
+                mac_data = olt.get_mac_table(f"EPON{interface}:{onu_id}")
+                
+                snapshot = {
+                    'timestamp': time.time(),
+                    'stats': stats,
+                    'signal': onu_info.get('signal') if onu_info else None,
+                    'temperature': onu_info.get('temperature') if onu_info else None,
+                    'lan_state': lan_state,
+                    'macs': mac_data.get('macs', []) if mac_data else [],
+                    'vlan': mac_data.get('vlans', []) if mac_data else []
+                }
+                collected_data.append(snapshot)
+                # Сохраняем снимок в БД
+                add_monitor_snapshot(task_id, snapshot)
+                olt.disconnect()
+            else:
+                snapshot = {'timestamp': time.time(), 'error': 'connect_failed'}
+                collected_data.append(snapshot)
+                add_monitor_snapshot(task_id, snapshot)
+            
+            # Обновляем last_update
+            update_monitor_task(task_id, last_update=datetime.utcnow())
+            
+            time.sleep(interval * 60)
+        
+        # Формируем отчёт
+        result = analyze_onu_monitor_data(collected_data, interface, onu_id)
+        # Сохраняем результат
+        update_monitor_task(task_id, status='done', end_time=datetime.utcnow(), result=json.dumps(result))
 
 def analyze_onu_monitor_data(data, interface, onu_id):
     """Анализирует собранные данные и формирует отчёт."""
@@ -373,71 +381,6 @@ def analyze_onu_monitor_data(data, interface, onu_id):
     })
     
     return report
-
-def monitor_onu_worker(task_id, device, interface, onu_id, duration, interval):
-    """Фоновый процесс мониторинга ONU."""
-    import time
-    from app.billing import get_address_from_billing
-    from app.olt_handler import OLTConnection
-    from app.gpon_handler import GPONConnection
-    from app.vsol_handler import VSOLConnection
-    
-    task = onu_monitor_tasks[task_id]
-    # Добавляем имя и IP устройства для отображения
-    task['device_name'] = device.name
-    task['device_ip'] = device.ip
-    start_time = time.time()
-    end_time = start_time + duration * 60  # duration в минутах
-    
-    # Определяем тип соединения
-    if device.device_type == 'gpon':
-        conn_cls = GPONConnection
-    elif device.device_type == 'vsol':
-        conn_cls = VSOLConnection
-    else:
-        conn_cls = OLTConnection
-    
-    collected_data = []
-    
-    while time.time() < end_time and task['status'] == 'running':
-        # Создаём новое подключение к OLT
-        olt = conn_cls(device.ip, device.username, device.password, device.enable_password)
-        if olt.connect():
-            # Получаем статистику порта
-            stats = olt.get_port_statistics(interface, onu_id)
-            # Получаем информацию о сигнале
-            onu_info = olt.get_onu_info(interface, onu_id)
-            # Получаем состояние LAN
-            lan_state = olt.get_lan_state(interface, onu_id)
-            # Получаем MAC-таблицу
-            mac_data = olt.get_mac_table(f"EPON{interface}:{onu_id}")
-            
-            snapshot = {
-                'timestamp': time.time(),
-                'stats': stats,
-                'signal': onu_info.get('signal') if onu_info else None,
-                'temperature': onu_info.get('temperature') if onu_info else None,
-                'lan_state': lan_state,
-                'macs': mac_data.get('macs', []) if mac_data else [],
-                'vlan': mac_data.get('vlans', []) if mac_data else []
-            }
-            collected_data.append(snapshot)
-            olt.disconnect()
-        else:
-            # Не удалось подключиться, добавляем пустую запись
-            collected_data.append({'timestamp': time.time(), 'error': 'connect_failed'})
-        
-        # Обновляем прогресс в задаче
-        task['data'] = collected_data
-        task['last_update'] = time.time()
-        
-        # Ждём интервал
-        time.sleep(interval * 60)  # interval в минутах
-    
-    # Формируем отчёт
-    result = analyze_onu_monitor_data(collected_data, interface, onu_id)
-    task['status'] = 'done'
-    task['result'] = result
 
 def analyze_onu_monitor_data(data, interface, onu_id):
     """Анализирует собранные данные и формирует отчёт."""
