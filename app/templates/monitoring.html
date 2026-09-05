@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Мониторинг ONU</h2>
+<div class="table-responsive">
+    <table class="table table-striped table-sm" id="monitoringTable">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Устройство</th>
+                <th>Порт/ONU</th>
+                <th>Длительность</th>
+                <th>Интервал</th>
+                <th>Статус</th>
+                <th>Прогресс</th>
+                <th>Осталось</th>
+                <th>Действия</th>
+            </tr>
+        </thead>
+        <tbody>
+        </tbody>
+    </table>
+</div>
+
+<!-- Модальное окно для результата -->
+<div class="modal fade" id="monitorResultModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Результат мониторинга</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <pre id="monitorResultContent"></pre>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    let currentDeviceId = null;
+    let currentTaskId = null;
+
+    function updateMonitoringTable() {
+        fetch('/api/monitoring/tasks')
+            .then(response => response.json())
+            .then(data => {
+                const tbody = document.querySelector('#monitoringTable tbody');
+                tbody.innerHTML = '';
+                if (data.tasks.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="9" class="text-center">Нет активных мониторингов</td></tr>';
+                    return;
+                }
+                data.tasks.forEach(task => {
+                    const row = document.createElement('tr');
+                    const shortId = task.task_id.substring(0, 8) + '...';
+                    const statusBadge = task.status === 'running' ? 'bg-warning text-dark' : 'bg-success';
+                    const remaining = task.remaining > 0 ? task.remaining + ' сек' : '—';
+                    let progressBar = '';
+                    if (task.status === 'running') {
+                        const percent = (task.elapsed / (task.duration * 60)) * 100;
+                        progressBar = `<div class="progress" style="min-width:100px;">
+                            <div class="progress-bar" style="width: ${percent}%"></div>
+                        </div>`;
+                    } else {
+                        progressBar = '<span class="text-muted">Завершён</span>';
+                    }
+                    
+                    row.innerHTML = `
+                        <td>${shortId}</td>
+                        <td>${task.device_name} (${task.device_ip})</td>
+                        <td>${task.interface}:${task.onu_id}</td>
+                        <td>${task.duration} мин</td>
+                        <td>${task.interval} мин</td>
+                        <td><span class="badge ${statusBadge}">${task.status}</span></td>
+                        <td>${progressBar}</td>
+                        <td>${remaining}</td>
+                        <td>
+                            ${task.status === 'done' ? `<button class="btn btn-sm btn-primary" onclick="showResult('${task.task_id}', ${task.device_id})">Результат</button>` : ''}
+                        </td>
+                    `;
+                    tbody.appendChild(row);
+                });
+            })
+            .catch(error => console.error('Ошибка получения задач:', error));
+    }
+
+    function showResult(taskId, deviceId) {
+        fetch(`/api/device/${deviceId}/monitor_result/${taskId}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'ok') {
+                    const result = data.result;
+                    let text = `Интерфейс: ${result.interface}:${result.onu_id}\n`;
+                    text += `Собрано снимков: ${result.duration}\n`;
+                    text += '\nСводка:\n';
+                    if (result.summary) {
+                        for (const [key, value] of Object.entries(result.summary)) {
+                            text += `${key}: ${value}\n`;
+                        }
+                    }
+                    text += '\nАномалии:\n';
+                    if (result.anomalies.length > 0) {
+                        result.anomalies.forEach(a => text += `- ${a}\n`);
+                    } else {
+                        text += 'Аномалий не обнаружено.\n';
+                    }
+                    document.getElementById('monitorResultContent').textContent = text;
+                    new bootstrap.Modal(document.getElementById('monitorResultModal')).show();
+                } else {
+                    alert(data.message);
+                }
+            })
+            .catch(error => console.error('Ошибка получения результата:', error));
+    }
+
+    // Обновляем таблицу каждые 3 секунды
+    document.addEventListener('DOMContentLoaded', function() {
+        updateMonitoringTable();
+        setInterval(updateMonitoringTable, 3000);
+    });
+</script>
+{% endblock %}

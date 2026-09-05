@@ -381,6 +381,32 @@ class OLTConnection:
                 statuses[f"{interface}:{onu_id}"] = "up"
         return statuses, macs
 
+    def get_port_statistics(self, interface, onu_id):
+        """Получает статистику порта ONU."""
+        full_if = f"EPON{interface}:{onu_id}"
+        cmd = f"show epon interface {full_if} onu port 1 statistics"
+        print(f"[TELNET] Getting port statistics: {cmd}", file=sys.stderr)
+        try:
+            raw = self.send_command(cmd)
+            stats = {}
+            for line in raw.splitlines():
+                line_clean = line.strip()
+                # Ищем строки вида "In Good Octets                  : 16072038"
+                if ':' in line_clean and not line_clean.startswith('---'):
+                    parts = line_clean.split(':')
+                    if len(parts) >= 2:
+                        key = parts[0].strip()
+                        value = parts[1].strip()
+                        # Пробуем преобразовать в число (убираем возможные точки)
+                        try:
+                            stats[key] = int(value.replace(',', ''))
+                        except:
+                            stats[key] = value
+            return stats
+        except Exception as e:
+            print(f"[TELNET] Error getting stats: {e}", file=sys.stderr)
+            return None
+
     def get_mac_table(self, interface):
         cmd = f'show mac address-table interface {interface}'
         raw = self.send_command(cmd)

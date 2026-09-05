@@ -10,6 +10,7 @@ import os
 import sys
 import json
 from datetime import datetime, timedelta
+import time
 
 # Глобальный кэш VSOL
 _vsol_cache_global = {}
@@ -527,6 +528,102 @@ def reboot_onu(device_id, interface, onu):
     success, message = olt.reboot_onu(interface, onu)
     olt.disconnect()
     return jsonify({'status': 'ok' if success else 'error', 'message': message})
+@main.route('/api/device/<int:device_id>/monitor_start', methods=['POST'])
+@login_required
+def monitor_start(device_id):
+    import threading, uuid
+    from app.auto_poller import onu_monitor_tasks, monitor_onu_worker
+    device = Device.query.get_or_404(device_id)
+    data = request.get_json()
+    interface = data.get('interface')
+    onu_id = data.get('onu_id')
+    duration = int(data.get('duration', 10))  # минуты
+    interval = int(data.get('interval', 1))   # минуты
+    if not interface or not onu_id:
+        return jsonify({'status': 'error', 'message': 'Не указаны интерфейс или ONU'}), 400
+    if duration < 1 or interval < 1:
+        return jsonify({'status': 'error', 'message': 'Некорректные параметры'}), 400
+    
+    task_id = str(uuid.uuid4())
+    onu_monitor_tasks[task_id] = {
+        'status': 'running',
+        'device_id': device_id,
+        'device_name': device.name,
+        'device_ip': device.ip,
+        'interface': interface,
+        'onu_id': onu_id,
+        'start_time': time.time(),
+        'duration': duration,
+        'interval': interval,
+        'data': [],
+        'result': None
+    }
+    
+    # Запускаем мониторинг в отдельном потоке
+    t = threading.Thread(target=monitor_onu_worker, args=(task_id, device, interface, onu_id, duration, interval))
+    t.daemon = True
+    t.start()
+    
+    return jsonify({'status': 'ok', 'task_id': task_id, 'message': f'Мониторинг запущен на {duration} мин.'})
+
+@main.route('/api/device/<int:device_id>/monitor_status/<task_id>')
+@login_required
+def monitor_status(device_id, task_id):
+    from app.auto_poller import onu_monitor_tasks
+    task = onu_monitor_tasks.get(task_id)
+    if not task:
+        return jsonify({'status': 'error', 'message': 'Задача не найдена'}), 404
+    elapsed = time.time() - task['start_time']
+    remaining = max(0, task['duration'] * 60 - elapsed)
+    return jsonify({
+        'status': task['status'],
+        'elapsed': int(elapsed),
+        'remaining': int(remaining),
+        'samples': len(task['data']),
+        'last_update': task.get('last_update')
+    })
+
+
+@main.route('/api/monitoring/tasks')
+@login_required
+def monitoring_tasks():
+    from app.auto_poller import onu_monitor_tasks
+    tasks = []
+    for task_id, task in onu_monitor_tasks.items():
+        # Формируем данные для отображения
+        elapsed = time.time() - task['start_time']
+        remaining = max(0, task['duration'] * 60 - elapsed)
+        task_info = {
+            'task_id': task_id,
+            'device_id': task.get('device_id'),
+            'device_name': task.get('device_name', ''),
+            'device_ip': task.get('device_ip', ''),
+            'interface': task.get('interface'),
+            'onu_id': task.get('onu_id'),
+            'status': task.get('status'),
+            'start_time': task.get('start_time'),
+            'elapsed': int(elapsed),
+            'remaining': int(remaining),
+            'duration': task.get('duration'),
+            'interval': task.get('interval'),
+            'samples': len(task.get('data', [])),
+            'has_result': task.get('result') is not None
+        }
+        tasks.append(task_info)
+    # Сортируем по времени запуска (новые сверху)
+    tasks.sort(key=lambda x: x['start_time'], reverse=True)
+    return jsonify({'status': 'ok', 'tasks': tasks})
+@main.route('/api/device/<int:device_id>/monitor_result/<task_id>')
+@login_required
+def monitor_result(device_id, task_id):
+    from app.auto_poller import onu_monitor_tasks
+    task = onu_monitor_tasks.get(task_id)
+    if not task:
+        return jsonify({'status': 'error', 'message': 'Задача не найдена'}), 404
+    if task['status'] != 'done':
+        return jsonify({'status': 'error', 'message': 'Мониторинг ещё выполняется'}), 400
+    return jsonify({'status': 'ok', 'result': task['result']})
+
 @main.route('/api/device/<int:device_id>/interface_shutdown', methods=['POST'])
 @login_required
 def interface_shutdown(device_id):
@@ -846,6 +943,11 @@ def restart():
     print("Перезагрузка сервера по запросу администратора...", file=sys.stderr)
     os._exit(0)
 
+# ---------- Мониторинг ----------
+@main.route('/monitoring')
+@login_required
+def monitoring():
+    return render_template('monitoring.html')
 # ---------- Клиенты ----------
 @main.route('/clients')
 @login_required

@@ -45,6 +45,40 @@
         </div>
     </div>
 </div>
+<!-- Модальное окно для мониторинга ONU -->
+<div class="modal fade" id="monitorModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Мониторинг ONU <span id="monitorTarget"></span></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>Будет собирать статистику и состояние ONU каждые <strong id="monitorIntervalLabel"></strong> минут в течение <strong id="monitorDurationLabel"></strong> минут.</p>
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label for="monitorDuration" class="form-label">Длительность (мин)</label>
+                        <input type="number" class="form-control" id="monitorDuration" value="10" min="1" max="60">
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label for="monitorInterval" class="form-label">Интервал (мин)</label>
+                        <input type="number" class="form-control" id="monitorInterval" value="1" min="1" max="5">
+                    </div>
+                </div>
+                <div id="monitorProgress" style="display: none;">
+                    <p>Осталось: <span id="monitorRemaining"></span> сек.</p>
+                    <div class="progress">
+                        <div class="progress-bar" id="monitorProgressBar" style="width: 0%"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="button" class="btn btn-warning" id="startMonitor">Запустить</button>
+            </div>
+        </div>
+    </div>
+</div>
 <!-- Модальное окно для конфигурации -->
 <div class="modal fade" id="configModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-lg">
@@ -358,6 +392,9 @@ function renderCachedData(intf, data) {
                 <button class="btn btn-sm btn-outline-secondary configBtn" data-interface="${intf}" data-onu="${onu}" title="Config ONT">
                     <i class="fas fa-cog"></i>
                 </button>
+                <button class="btn btn-sm btn-outline-warning monitorBtn" data-interface="${intf}" data-onu="${onu}" title="Мониторинг ONU">
+                    <i class="fas fa-clock"></i>
+                </button>
                 <button class="btn btn-sm btn-outline-danger rebootBtn" data-interface="${intf}" data-onu="${onu}" title="Перезагрузить">
                     <i class="fas fa-power-off"></i>
                 </button>
@@ -528,6 +565,46 @@ function bindButtonHandlers(tbody) {
                 }
             } catch(e) { showToast('Ошибка: ' + e.message, 'error'); }
             this.disabled = false; this.innerHTML = '<i class="fas fa-cog"></i>';
+        });
+    });
+    
+    // Мониторинг ONU
+    tbody.querySelectorAll('.monitorBtn').forEach(b => {
+        b.addEventListener('click', function() {
+            const iface = this.dataset.interface;
+            const onu = this.dataset.onu;
+            document.getElementById('monitorTarget').textContent = iface + ':' + onu;
+            document.getElementById('monitorIntervalLabel').textContent = document.getElementById('monitorInterval').value;
+            document.getElementById('monitorDurationLabel').textContent = document.getElementById('monitorDuration').value;
+            const modal = new bootstrap.Modal(document.getElementById('monitorModal'));
+            modal.show();
+            document.getElementById('startMonitor').onclick = async function() {
+                const duration = parseInt(document.getElementById('monitorDuration').value);
+                const interval = parseInt(document.getElementById('monitorInterval').value);
+                if (!duration || !interval) {
+                    showToast('Введите корректные значения', 'warning');
+                    return;
+                }
+                this.disabled = true;
+                try {
+                    const resp = await fetch(`/api/device/${deviceId}/monitor_start`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ interface: iface, onu_id: onu, duration: duration, interval: interval })
+                    });
+                    const data = await resp.json();
+                    if (data.status === 'ok') {
+                        showToast(data.message, 'success');
+                        modal.hide();
+                        pollMonitorStatus(data.task_id, duration * 60);
+                    } else {
+                        showToast(data.message, 'error');
+                    }
+                } catch(e) {
+                    showToast('Ошибка: ' + e.message, 'error');
+                }
+                this.disabled = false;
+            };
         });
     });
 }
@@ -790,5 +867,109 @@ document.querySelectorAll('.shutdown-btn').forEach(btn => {
         };
     });
 });
+
+// Обработчик кнопки "Мониторинг"
+document.querySelectorAll('.monitorBtn').forEach(btn => {
+    btn.addEventListener('click', function() {
+        const iface = this.dataset.interface;
+        const onu = this.dataset.onu;
+        document.getElementById('monitorTarget').textContent = iface + ':' + onu;
+        document.getElementById('monitorIntervalLabel').textContent = document.getElementById('monitorInterval').value;
+        document.getElementById('monitorDurationLabel').textContent = document.getElementById('monitorDuration').value;
+        const modal = new bootstrap.Modal(document.getElementById('monitorModal'));
+        modal.show();
+        document.getElementById('startMonitor').onclick = async function() {
+            const duration = parseInt(document.getElementById('monitorDuration').value);
+            const interval = parseInt(document.getElementById('monitorInterval').value);
+            if (!duration || !interval) {
+                showToast('Введите корректные значения', 'warning');
+                return;
+            }
+            this.disabled = true;
+            try {
+                const resp = await fetch(`/api/device/${deviceId}/monitor_start`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ interface: iface, onu_id: onu, duration: duration, interval: interval })
+                });
+                const data = await resp.json();
+                if (data.status === 'ok') {
+                    showToast(data.message, 'success');
+                    modal.hide();
+                    pollMonitorStatus(data.task_id, duration * 60);
+                } else {
+                    showToast(data.message, 'error');
+                }
+            } catch(e) {
+                showToast('Ошибка: ' + e.message, 'error');
+            }
+            this.disabled = false;
+        };
+    });
+});
+
+function pollMonitorStatus(taskId, totalSeconds) {
+    const progressModal = new bootstrap.Modal(document.getElementById('monitorProgressModal') || document.getElementById('monitorModal'));
+    // Показываем прогресс в модальном окне
+    document.getElementById('monitorProgress').style.display = 'block';
+    const startTime = Date.now();
+    const interval = setInterval(async () => {
+        try {
+            const resp = await fetch(`/api/device/${deviceId}/monitor_status/${taskId}`);
+            const data = await resp.json();
+            if (data.status === 'ok') {
+                const elapsed = data.elapsed;
+                const remaining = data.remaining;
+                const percent = (elapsed / totalSeconds) * 100;
+                document.getElementById('monitorProgressBar').style.width = percent + '%';
+                document.getElementById('monitorRemaining').textContent = remaining;
+                if (data.status === 'done') {
+                    clearInterval(interval);
+                    // Получаем результат
+                    const resultResp = await fetch(`/api/device/${deviceId}/monitor_result/${taskId}`);
+                    const resultData = await resultResp.json();
+                    if (resultData.status === 'ok') {
+                        showMonitorResult(resultData.result);
+                    }
+                    document.getElementById('monitorProgress').style.display = 'none';
+                }
+            }
+        } catch(e) {
+            console.error('Ошибка получения статуса:', e);
+        }
+    }, 2000); // обновляем каждые 2 секунды
+}
+
+function showMonitorResult(result) {
+    let html = '<h5>Результат мониторинга</h5>';
+    html += `<p>Интерфейс: ${result.interface}:${result.onu_id}</p>`;
+    html += `<p>Собрано снимков: ${result.duration}</p>`;
+    html += '<h6>Сводка:</h6>';
+    html += '<ul>';
+    if (result.summary) {
+        for (const [key, value] of Object.entries(result.summary)) {
+            html += `<li>${key}: ${value}</li>`;
+        }
+    }
+    html += '</ul>';
+    if (result.anomalies.length > 0) {
+        html += '<h6 class="text-danger">Аномалии:</h6><ul>';
+        result.anomalies.forEach(a => html += `<li class="text-danger">${a}</li>`);
+        html += '</ul>';
+    } else {
+        html += '<p class="text-success">Аномалий не обнаружено.</p>';
+    }
+    // Отображаем в модальном окне результатов (создадим временное окно)
+    const resultModal = document.createElement('div');
+    resultModal.className = 'modal fade';
+    resultModal.id = 'monitorResultModal';
+    resultModal.innerHTML = `<div class="modal-dialog modal-lg"><div class="modal-content">
+        <div class="modal-header"><h5 class="modal-title">Отчёт мониторинга</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+        <div class="modal-body"><pre>${html}</pre></div>
+        <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button></div>
+    </div></div>`;
+    document.body.appendChild(resultModal);
+    new bootstrap.Modal(resultModal).show();
+}
 </script>
 {% endblock %}

@@ -172,8 +172,264 @@ class AutoPoller:
         except Exception as e:
             print(f"[AUTO] [{device.name}] Error polling {interface}: {e}", file=sys.stderr)
 
+# Глобальный словарь для мониторинга ONU
+onu_monitor_tasks = {}  # task_id -> {'status': 'running'/'done', 'device_id':..., 'interface':..., 'onu_id':..., 'start_time':..., 'duration':..., 'interval':..., 'data': [], 'result': None}
+
+def monitor_onu_worker(task_id, device, interface, onu_id, duration, interval):
+    """Фоновый процесс мониторинга ONU."""
+    import time
+    from app.billing import get_address_from_billing
+    from app.olt_handler import OLTConnection
+    from app.gpon_handler import GPONConnection
+    from app.vsol_handler import VSOLConnection
+    
+    task = onu_monitor_tasks[task_id]
+    # Добавляем имя и IP устройства для отображения
+    task['device_name'] = device.name
+    task['device_ip'] = device.ip
+    start_time = time.time()
+    end_time = start_time + duration * 60  # duration в минутах
+    
+    # Определяем тип соединения
+    if device.device_type == 'gpon':
+        conn_cls = GPONConnection
+    elif device.device_type == 'vsol':
+        conn_cls = VSOLConnection
+    else:
+        conn_cls = OLTConnection
+    
+    collected_data = []
+    
+    while time.time() < end_time and task['status'] == 'running':
+        # Создаём новое подключение к OLT
+        olt = conn_cls(device.ip, device.username, device.password, device.enable_password)
+        if olt.connect():
+            # Получаем статистику порта
+            stats = olt.get_port_statistics(interface, onu_id)
+            # Получаем информацию о сигнале
+            onu_info = olt.get_onu_info(interface, onu_id)
+            # Получаем состояние LAN
+            lan_state = olt.get_lan_state(interface, onu_id)
+            # Получаем MAC-таблицу
+            mac_data = olt.get_mac_table(f"EPON{interface}:{onu_id}")
+            
+            snapshot = {
+                'timestamp': time.time(),
+                'stats': stats,
+                'signal': onu_info.get('signal') if onu_info else None,
+                'temperature': onu_info.get('temperature') if onu_info else None,
+                'lan_state': lan_state,
+                'macs': mac_data.get('macs', []) if mac_data else [],
+                'vlan': mac_data.get('vlans', []) if mac_data else []
+            }
+            collected_data.append(snapshot)
+            olt.disconnect()
+        else:
+            # Не удалось подключиться, добавляем пустую запись
+            collected_data.append({'timestamp': time.time(), 'error': 'connect_failed'})
+        
+        # Обновляем прогресс в задаче
+        task['data'] = collected_data
+        task['last_update'] = time.time()
+        
+        # Ждём интервал
+        time.sleep(interval * 60)  # interval в минутах
+    
+    # Формируем отчёт
+    result = analyze_onu_monitor_data(collected_data, interface, onu_id)
+    task['status'] = 'done'
+    task['result'] = result
+
+def analyze_onu_monitor_data(data, interface, onu_id):
+    """Анализирует собранные данные и формирует отчёт."""
+    report = {
+        'interface': interface,
+        'onu_id': onu_id,
+        'duration': len(data),
+        'anomalies': [],
+        'summary': {}
+    }
+    
+    if not data:
+        report['summary'] = {'error': 'Нет данных'}
+        return report
+    
+    # Базовые проверки
+    first = data[0]
+    last = data[-1]
+    
+    # Проверка ошибок в статистике
+    if first.get('stats') and last.get('stats'):
+        for key in ['In Bad Octets', 'In FCS Error Frames', 'Collisions Frames', 'Excessive Frames', 'Late Frames']:
+            if key in last['stats'] and key in first['stats']:
+                diff = last['stats'][key] - first['stats'][key]
+                if diff > 0:
+                    report['anomalies'].append(f"Увеличение {key}: +{diff}")
+    
+    # Проверка сигнала
+    if first.get('signal') is not None and last.get('signal') is not None:
+        try:
+            sig_diff = float(last['signal']) - float(first['signal'])
+            if sig_diff < -3:  # ухудшение более чем на 3 дБ
+                report['anomalies'].append(f"Ухудшение сигнала: {first['signal']} -> {last['signal']}")
+            elif sig_diff > 3:
+                report['anomalies'].append(f"Улучшение сигнала: {first['signal']} -> {last['signal']}")
+        except:
+            pass
+    
+    # Проверка LAN-статуса
+    if first.get('lan_state') and last.get('lan_state'):
+        if first['lan_state'] != last['lan_state']:
+            report['anomalies'].append(f"Изменение LAN-статуса: {first['lan_state']} -> {last['lan_state']}")
+    
+    # Проверка MAC-адресов
+    if first.get('macs') and last.get('macs'):
+        if set(first['macs']) != set(last['macs']):
+            report['anomalies'].append(f"Изменение MAC-адресов: {first['macs']} -> {last['macs']}")
+    
+    # Добавим сводку
+    report['summary'] = {
+        'samples': len(data),
+        'first_signal': first.get('signal'),
+        'last_signal': last.get('signal'),
+        'first_lan': first.get('lan_state'),
+        'last_lan': last.get('lan_state'),
+        'total_rx_octets': last.get('stats', {}).get('In Good Octets', 0) - first.get('stats', {}).get('In Good Octets', 0),
+        'total_tx_octets': last.get('stats', {}).get('Out Octets', 0) - first.get('stats', {}).get('Out Octets', 0),
+    }
+    
+    return report
+
 # Глобальный словарь для статусов устройств
 device_status = {}  # device_id -> {'status': 'up'/'down', 'last_check': datetime}
+
+# Глобальный словарь для мониторинга ONU
+onu_monitor_tasks = {}  # task_id -> {'status': 'running'/'done', 'device_id':..., 'interface':..., 'onu_id':..., 'start_time':..., 'duration':..., 'interval':..., 'data': [], 'result': None}
+
+def monitor_onu_worker(task_id, device, interface, onu_id, duration, interval):
+    """Фоновый процесс мониторинга ONU."""
+    import time
+    from app.billing import get_address_from_billing
+    from app.olt_handler import OLTConnection
+    from app.gpon_handler import GPONConnection
+    from app.vsol_handler import VSOLConnection
+    
+    task = onu_monitor_tasks[task_id]
+    # Добавляем имя и IP устройства для отображения
+    task['device_name'] = device.name
+    task['device_ip'] = device.ip
+    start_time = time.time()
+    end_time = start_time + duration * 60  # duration в минутах
+    
+    # Определяем тип соединения
+    if device.device_type == 'gpon':
+        conn_cls = GPONConnection
+    elif device.device_type == 'vsol':
+        conn_cls = VSOLConnection
+    else:
+        conn_cls = OLTConnection
+    
+    collected_data = []
+    
+    while time.time() < end_time and task['status'] == 'running':
+        # Создаём новое подключение к OLT
+        olt = conn_cls(device.ip, device.username, device.password, device.enable_password)
+        if olt.connect():
+            # Получаем статистику порта
+            stats = olt.get_port_statistics(interface, onu_id)
+            # Получаем информацию о сигнале
+            onu_info = olt.get_onu_info(interface, onu_id)
+            # Получаем состояние LAN
+            lan_state = olt.get_lan_state(interface, onu_id)
+            # Получаем MAC-таблицу
+            mac_data = olt.get_mac_table(f"EPON{interface}:{onu_id}")
+            
+            snapshot = {
+                'timestamp': time.time(),
+                'stats': stats,
+                'signal': onu_info.get('signal') if onu_info else None,
+                'temperature': onu_info.get('temperature') if onu_info else None,
+                'lan_state': lan_state,
+                'macs': mac_data.get('macs', []) if mac_data else [],
+                'vlan': mac_data.get('vlans', []) if mac_data else []
+            }
+            collected_data.append(snapshot)
+            olt.disconnect()
+        else:
+            # Не удалось подключиться, добавляем пустую запись
+            collected_data.append({'timestamp': time.time(), 'error': 'connect_failed'})
+        
+        # Обновляем прогресс в задаче
+        task['data'] = collected_data
+        task['last_update'] = time.time()
+        
+        # Ждём интервал
+        time.sleep(interval * 60)  # interval в минутах
+    
+    # Формируем отчёт
+    result = analyze_onu_monitor_data(collected_data, interface, onu_id)
+    task['status'] = 'done'
+    task['result'] = result
+
+def analyze_onu_monitor_data(data, interface, onu_id):
+    """Анализирует собранные данные и формирует отчёт."""
+    report = {
+        'interface': interface,
+        'onu_id': onu_id,
+        'duration': len(data),
+        'anomalies': [],
+        'summary': {}
+    }
+    
+    if not data:
+        report['summary'] = {'error': 'Нет данных'}
+        return report
+    
+    # Базовые проверки
+    first = data[0]
+    last = data[-1]
+    
+    # Проверка ошибок в статистике
+    if first.get('stats') and last.get('stats'):
+        for key in ['In Bad Octets', 'In FCS Error Frames', 'Collisions Frames', 'Excessive Frames', 'Late Frames']:
+            if key in last['stats'] and key in first['stats']:
+                diff = last['stats'][key] - first['stats'][key]
+                if diff > 0:
+                    report['anomalies'].append(f"Увеличение {key}: +{diff}")
+    
+    # Проверка сигнала
+    if first.get('signal') is not None and last.get('signal') is not None:
+        try:
+            sig_diff = float(last['signal']) - float(first['signal'])
+            if sig_diff < -3:  # ухудшение более чем на 3 дБ
+                report['anomalies'].append(f"Ухудшение сигнала: {first['signal']} -> {last['signal']}")
+            elif sig_diff > 3:
+                report['anomalies'].append(f"Улучшение сигнала: {first['signal']} -> {last['signal']}")
+        except:
+            pass
+    
+    # Проверка LAN-статуса
+    if first.get('lan_state') and last.get('lan_state'):
+        if first['lan_state'] != last['lan_state']:
+            report['anomalies'].append(f"Изменение LAN-статуса: {first['lan_state']} -> {last['lan_state']}")
+    
+    # Проверка MAC-адресов
+    if first.get('macs') and last.get('macs'):
+        if set(first['macs']) != set(last['macs']):
+            report['anomalies'].append(f"Изменение MAC-адресов: {first['macs']} -> {last['macs']}")
+    
+    # Добавим сводку
+    report['summary'] = {
+        'samples': len(data),
+        'first_signal': first.get('signal'),
+        'last_signal': last.get('signal'),
+        'first_lan': first.get('lan_state'),
+        'last_lan': last.get('lan_state'),
+        'total_rx_octets': last.get('stats', {}).get('In Good Octets', 0) - first.get('stats', {}).get('In Good Octets', 0),
+        'total_tx_octets': last.get('stats', {}).get('Out Octets', 0) - first.get('stats', {}).get('Out Octets', 0),
+    }
+    
+    return report
 
 # Глобальный словарь для статусов устройств
 device_status = {}  # device_id -> {'status': 'up'/'down', 'last_check': datetime}

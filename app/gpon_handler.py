@@ -153,6 +153,30 @@ class GPONConnection:
         
         return result if result else None
 
+    def get_port_statistics(self, interface, onu_id):
+        """Получает статистику порта ONU для GPON."""
+        full_if = f"GPON{interface}:{onu_id}"
+        cmd = f"show gpon interface {full_if} onu port 1 statistics"
+        print(f"[GPON] Getting port statistics: {cmd}", file=sys.stderr)
+        try:
+            raw = self.send_command(cmd)
+            stats = {}
+            for line in raw.splitlines():
+                line_clean = line.strip()
+                if ':' in line_clean and not line_clean.startswith('---'):
+                    parts = line_clean.split(':')
+                    if len(parts) >= 2:
+                        key = parts[0].strip()
+                        value = parts[1].strip()
+                        try:
+                            stats[key] = int(value.replace(',', ''))
+                        except:
+                            stats[key] = value
+            return stats
+        except Exception as e:
+            print(f"[GPON] Error getting stats: {e}", file=sys.stderr)
+            return None
+
     def get_mac_table(self, interface):
         cmd = f'show mac address-table interface {interface}'
         raw = self.send_command(cmd)
