@@ -758,25 +758,45 @@ document.querySelectorAll('.bulk-delete-btn').forEach(btn => {
     });
 });
 
-// Очередь запросов к устройству
-const requestQueue = [];
-let isProcessing = false;
+
+// Очередь для записи (последовательная), чтение – параллельно
+const writeQueue = {};     // device_id -> массив задач записи
+const writeBusy = {};      // device_id -> true, если выполняется запись
 let queueTaskCount = 0;
 
-function enqueueRequest(url, options) {
-    return new Promise((resolve, reject) => {
-        requestQueue.push({url, options, resolve, reject});
-        processQueue();
-    });
+function isWriteOperation(url) {
+    return url.includes('/reboot/') || url.includes('/delete/') ||
+           url.includes('/set1g/') || url.includes('/blacklist/') ||
+           url.includes('/interface_shutdown') || url.includes('/monitor_start/');
 }
 
+function enqueueRequest(url, options) {
+    const deviceId = getDeviceIdFromUrl(url);
+    if (isWriteOperation(url)) {
+        // Операции записи идут через очередь
+        return new Promise((resolve, reject) => {
+            const task = {url, options, resolve, reject};
+            if (!writeQueue[deviceId]) writeQueue[deviceId] = [];
+            writeQueue[deviceId].push(task);
+            processWriteQueue(deviceId);
+        });
+    } else {
+        // Операции чтения выполняются параллельно
+        return originalFetch(url, options);
+    }
+}
 
-async function processQueue() {
-    if (isProcessing) return;
-    isProcessing = true;
+function getDeviceIdFromUrl(url) {
+    const match = url.match(/\/api\/device\/(\d+)/);
+    return match ? match[1] : 'unknown';
+}
+
+async function processWriteQueue(deviceId) {
+    if (writeBusy[deviceId]) return;
+    writeBusy[deviceId] = true;
     showQueueIndicator();
-    while (requestQueue.length > 0) {
-        const task = requestQueue.shift();
+    while (writeQueue[deviceId] && writeQueue[deviceId].length > 0) {
+        const task = writeQueue[deviceId].shift();
         updateQueueIndicator(`Выполняется: ${getTaskName(task.url)}`);
         try {
             const response = await originalFetch(task.url, task.options);
@@ -788,10 +808,11 @@ async function processQueue() {
             task.reject(e);
         }
     }
-    isProcessing = false;
-    hideQueueIndicator();
+    writeBusy[deviceId] = false;
+    if (Object.keys(writeBusy).every(key => !writeBusy[key])) {
+        hideQueueIndicator();
+    }
 }
-
 
 function getTaskName(url) {
     if (url.includes('/mac/')) return 'Получение MAC-таблицы';
@@ -803,6 +824,8 @@ function getTaskName(url) {
     if (url.includes('/scan_interface/')) return 'Сканирование порта';
     if (url.includes('/running_config/')) return 'Получение конфигурации';
     if (url.includes('/signal_history/')) return 'Загрузка графика';
+    if (url.includes('/monitor_start/')) return 'Запуск мониторинга';
+    if (url.includes('/interface_shutdown')) return 'Выключение интерфейса';
     return 'Операция';
 }
 
@@ -823,16 +846,15 @@ function updateQueueIndicator(text) {
     queueIndicator.textContent = text;
 }
 
-// Переопределяем fetch для запросов к API устройства
+// Оригинальный fetch сохраняем для внутреннего использования
 const originalFetch = window.fetch;
+// Переопределяем fetch
 window.fetch = function(url, options = {}) {
     if (typeof url === 'string' && url.includes('/api/device/')) {
         return enqueueRequest(url, options);
     }
     return originalFetch(url, options);
 };
-
-
 // Обработчик кнопки "Выкл"
 document.querySelectorAll('.shutdown-btn').forEach(btn => {
     btn.addEventListener('click', function() {

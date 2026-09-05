@@ -172,8 +172,47 @@ class AutoPoller:
         except Exception as e:
             print(f"[AUTO] [{device.name}] Error polling {interface}: {e}", file=sys.stderr)
 
-# Глобальный словарь для мониторинга ONU
-onu_monitor_tasks = {}  # task_id -> {'status': 'running'/'done', 'device_id':..., 'interface':..., 'onu_id':..., 'start_time':..., 'duration':..., 'interval':..., 'data': [], 'result': None}
+# Импортируем модели для работы с БД
+from app.models import MonitorTask, MonitorSnapshot, db
+
+# Функции для работы с БД
+def create_monitor_task(task_id, device_id, interface, onu_id, duration, interval):
+    task = MonitorTask(
+        task_id=task_id,
+        device_id=device_id,
+        interface=interface,
+        onu_id=onu_id,
+        duration=duration,
+        interval=interval,
+        status='running'
+    )
+    db.session.add(task)
+    db.session.commit()
+    return task
+
+def update_monitor_task(task_id, **kwargs):
+    task = MonitorTask.query.filter_by(task_id=task_id).first()
+    if task:
+        for key, value in kwargs.items():
+            setattr(task, key, value)
+        db.session.commit()
+
+def add_monitor_snapshot(task_id, data):
+    snapshot = MonitorSnapshot(task_id=task_id, data=json.dumps(data))
+    db.session.add(snapshot)
+    db.session.commit()
+
+def get_monitor_task(task_id):
+    return MonitorTask.query.filter_by(task_id=task_id).first()
+
+def get_monitor_snapshots(task_id):
+    return MonitorSnapshot.query.filter_by(task_id=task_id).order_by(MonitorSnapshot.timestamp).all()
+
+def get_all_monitor_tasks():
+    return MonitorTask.query.order_by(MonitorTask.start_time.desc()).all()
+
+# Глобальный словарь для активных задач (будем использовать только для потоков)
+_active_monitor_threads = {}
 
 def monitor_onu_worker(task_id, device, interface, onu_id, duration, interval):
     """Фоновый процесс мониторинга ONU."""
