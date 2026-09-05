@@ -254,23 +254,38 @@ def analyze_onu_monitor_data(data, interface, onu_id):
         report['summary'] = {'error': 'Нет данных'}
         return report
     
-    # Базовые проверки
     first = data[0]
     last = data[-1]
     
-    # Проверка ошибок в статистике
-    if first.get('stats') and last.get('stats'):
-        for key in ['In Bad Octets', 'In FCS Error Frames', 'Collisions Frames', 'Excessive Frames', 'Late Frames']:
-            if key in last['stats'] and key in first['stats']:
-                diff = last['stats'][key] - first['stats'][key]
-                if diff > 0:
-                    report['anomalies'].append(f"Увеличение {key}: +{diff}")
+    # Проверка ошибок в статистике LAN-порта
+    error_fields = [
+        'In Bad Octets',
+        'In FCS Error Frames',
+        'In MAC Received Error Frames',
+        'Fragments Frames',
+        'Oversize Frames',
+        'Jabber Frames',
+        'Collisions Frames',
+        'Excessive Frames',
+        'Late Frames'
+    ]
+    lan_errors = {}
+    total_error_delta = 0
+    for field in error_fields:
+        if field in first['stats'] and field in last['stats']:
+            try:
+                diff = int(last['stats'][field]) - int(first['stats'][field])
+            except:
+                diff = 0
+            if diff > 0:
+                lan_errors[field] = diff
+                total_error_delta += diff
     
     # Проверка сигнала
     if first.get('signal') is not None and last.get('signal') is not None:
         try:
             sig_diff = float(last['signal']) - float(first['signal'])
-            if sig_diff < -3:  # ухудшение более чем на 3 дБ
+            if sig_diff < -3:
                 report['anomalies'].append(f"Ухудшение сигнала: {first['signal']} -> {last['signal']}")
             elif sig_diff > 3:
                 report['anomalies'].append(f"Улучшение сигнала: {first['signal']} -> {last['signal']}")
@@ -287,24 +302,38 @@ def analyze_onu_monitor_data(data, interface, onu_id):
         if set(first['macs']) != set(last['macs']):
             report['anomalies'].append(f"Изменение MAC-адресов: {first['macs']} -> {last['macs']}")
     
-    # Добавим сводку
-    report['summary'] = {
+    # Добавляем информацию об ошибках LAN
+    if lan_errors:
+        # Добавляем аномалию
+        error_str = ', '.join([f"{k}: +{v}" for k, v in lan_errors.items()])
+        report['anomalies'].append(f"Обнаружены ошибки на LAN-порту: {error_str}")
+        # Добавляем в сводку
+        report['summary']['lan_errors'] = lan_errors
+        report['summary']['total_error_delta'] = total_error_delta
+    else:
+        report['summary']['lan_errors'] = 'Нет увеличения ошибок'
+        report['summary']['total_error_delta'] = 0
+    
+    # Общая сводка
+    rx_diff = int(last.get('stats', {}).get('In Good Octets', 0)) - int(first.get('stats', {}).get('In Good Octets', 0))
+    if rx_diff < 0:
+        rx_diff = 0
+        report['anomalies'].append("Сброс счётчика входящих октетов")
+    tx_diff = int(last.get('stats', {}).get('Out Octets', 0)) - int(first.get('stats', {}).get('Out Octets', 0))
+    if tx_diff < 0:
+        tx_diff = 0
+        report['anomalies'].append("Сброс счётчика исходящих октетов")
+    report['summary'].update({
         'samples': len(data),
         'first_signal': first.get('signal'),
         'last_signal': last.get('signal'),
         'first_lan': first.get('lan_state'),
         'last_lan': last.get('lan_state'),
-        'total_rx_octets': last.get('stats', {}).get('In Good Octets', 0) - first.get('stats', {}).get('In Good Octets', 0),
-        'total_tx_octets': last.get('stats', {}).get('Out Octets', 0) - first.get('stats', {}).get('Out Octets', 0),
-    }
+        'total_rx_octets': rx_diff,
+        'total_tx_octets': tx_diff,
+    })
     
     return report
-
-# Глобальный словарь для статусов устройств
-device_status = {}  # device_id -> {'status': 'up'/'down', 'last_check': datetime}
-
-# Глобальный словарь для мониторинга ONU
-onu_monitor_tasks = {}  # task_id -> {'status': 'running'/'done', 'device_id':..., 'interface':..., 'onu_id':..., 'start_time':..., 'duration':..., 'interval':..., 'data': [], 'result': None}
 
 def monitor_onu_worker(task_id, device, interface, onu_id, duration, interval):
     """Фоновый процесс мониторинга ONU."""
