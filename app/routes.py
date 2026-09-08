@@ -102,6 +102,13 @@ def utility_processor():
     return dict(get_trend=get_trend)
 
 # ---------- Главная и авторизация ----------
+def has_permission(user, perm):
+    """Проверяет, имеет ли пользователь право на раздел."""
+    if user.is_admin:
+        return True
+    perms = user.permissions.split(',') if user.permissions else []
+    return perm in perms
+
 @main.route('/')
 @login_required
 def index():
@@ -959,11 +966,38 @@ def restart():
 @main.route('/monitoring')
 @login_required
 def monitoring():
+    if not has_permission(current_user, 'monitoring'):
+        return "Доступ запрещён", 403
     return render_template('monitoring.html')
+@main.route('/edit_permissions/<int:user_id>', methods=['GET', 'POST'])
+@admin_required
+def edit_permissions(user_id):
+    user = User.query.get_or_404(user_id)
+    if request.method == 'POST':
+        perms = []
+        if request.form.get('perm_clients'):
+            perms.append('clients')
+        if request.form.get('perm_monitoring'):
+            perms.append('monitoring')
+        if request.form.get('perm_history'):
+            perms.append('history')
+        if request.form.get('perm_users'):
+            perms.append('users')
+        if request.form.get('perm_settings'):
+            perms.append('settings')
+        if request.form.get('perm_restart'):
+            perms.append('restart')
+        user.permissions = ','.join(perms)
+        db.session.commit()
+        return redirect(url_for('main.user_list'))
+    return render_template('edit_permissions.html', user=user)
+
 # ---------- Клиенты ----------
 @main.route('/clients')
 @login_required
 def clients():
+    if not has_permission(current_user, 'clients'):
+        return "Доступ запрещён", 403
     from app.models import Client
     clients = Client.query.order_by(Client.name).all()
     return render_template('clients.html', clients=clients)

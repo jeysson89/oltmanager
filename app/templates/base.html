@@ -16,12 +16,22 @@
             <a class="navbar-brand" href="{{ url_for('main.index') }}">OLT Manager</a>
             <div class="navbar-nav ms-auto">
                 {% if current_user.is_authenticated %}
-                    {% if current_user.is_admin %}
+                    {% if current_user.is_admin or 'clients' in current_user.permissions.split(',') %}
                     <a class="nav-link" href="{{ url_for('main.clients') }}">Клиенты</a>
+                    {% endif %}
+                    {% if current_user.is_admin or 'monitoring' in current_user.permissions.split(',') %}
                     <a class="nav-link" href="{{ url_for('main.monitoring') }}">Мониторинг</a>
+                    {% endif %}
+                    {% if current_user.is_admin or 'history' in current_user.permissions.split(',') %}
                     <a class="nav-link" href="{{ url_for('main.login_history') }}"><i class="fas fa-history"></i> История</a>
+                    {% endif %}
+                    {% if current_user.is_admin or 'users' in current_user.permissions.split(',') %}
                     <a class="nav-link" href="{{ url_for('main.user_list') }}">Пользователи</a>
+                    {% endif %}
+                    {% if current_user.is_admin or 'settings' in current_user.permissions.split(',') %}
                     <a class="nav-link" href="{{ url_for('main.settings') }}">Настройки</a>
+                    {% endif %}
+                    {% if current_user.is_admin or 'restart' in current_user.permissions.split(',') %}
                     <a class="nav-link text-warning" href="{{ url_for('main.restart') }}" onclick="return confirm('Перезагрузить сервер?')">⟳ Перезагрузка</a>
                     {% endif %}
                     <a class="nav-link" href="{{ url_for('main.logout') }}">Выйти</a>

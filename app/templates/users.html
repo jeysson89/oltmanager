@@ -19,6 +19,7 @@
             <td>{{ 'Да' if user.is_admin else 'Нет' }}</td>
             <td>
                 <a href="{{ url_for('main.change_password', user_id=user.id) }}" class="btn btn-sm btn-warning">Сменить пароль</a>
+                <a href="{{ url_for('main.edit_permissions', user_id=user.id) }}" class="btn btn-sm btn-info">Права</a>
             </td>
         </tr>
         {% endfor %}

@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Права пользователя: {{ user.username }}</h2>
+<form method="POST">
+    <div class="form-check">
+        <input class="form-check-input" type="checkbox" name="perm_clients" id="perm_clients"
+               {% if 'clients' in user.permissions.split(',') %}checked{% endif %}>
+        <label class="form-check-label" for="perm_clients">
+            Раздел «Клиенты»
+        </label>
+    </div>
+    <div class="form-check">
+        <input class="form-check-input" type="checkbox" name="perm_monitoring" id="perm_monitoring"
+               {% if 'monitoring' in user.permissions.split(',') %}checked{% endif %}>
+        <label class="form-check-label" for="perm_monitoring">
+            Раздел «Мониторинг»
+        </label>
+    </div>
+    <div class="form-check">
+        <input class="form-check-input" type="checkbox" name="perm_history" id="perm_history"
+               {% if 'history' in user.permissions.split(',') %}checked{% endif %}>
+        <label class="form-check-label" for="perm_history">
+            Раздел «История входов»
+        </label>
+    </div>
+    <div class="form-check">
+        <input class="form-check-input" type="checkbox" name="perm_users" id="perm_users"
+               {% if 'users' in user.permissions.split(',') %}checked{% endif %}>
+        <label class="form-check-label" for="perm_users">
+            Раздел «Пользователи»
+        </label>
+    </div>
+    <div class="form-check">
+        <input class="form-check-input" type="checkbox" name="perm_settings" id="perm_settings"
+               {% if 'settings' in user.permissions.split(',') %}checked{% endif %}>
+        <label class="form-check-label" for="perm_settings">
+            Раздел «Настройки»
+        </label>
+    </div>
+    <div class="form-check">
+        <input class="form-check-input" type="checkbox" name="perm_restart" id="perm_restart"
+               {% if 'restart' in user.permissions.split(',') %}checked{% endif %}>
+        <label class="form-check-label" for="perm_restart">
+            Раздел «Перезагрузка сервера»
+        </label>
+    </div>
+    <button type="submit" class="btn btn-primary mt-3">Сохранить</button>
+    <a href="{{ url_for('main.user_list') }}" class="btn btn-secondary mt-3">Отмена</a>
+</form>
+{% endblock %}
