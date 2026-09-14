@@ -197,20 +197,53 @@ def device_status():
 
 
 
-def _get_device_connection(device):
-    """Возвращает соединение нужного типа для устройства."""
-    if device.device_type == 'gpon':
-        from app.gpon_handler import GPONConnection
-        return GPONConnection(device.ip, device.username, device.password, device.enable_password)
-    elif device.device_type == 'vsol':
-        from app.vsol_handler import VSOLConnection
-        return VSOLConnection(device.ip, device.username, device.password, device.enable_password)
-    else:
-        return OLTConnection(device.ip, device.username, device.password, device.enable_password)
-
-
 @main.route('/device/<int:device_id>')
 @login_required
+def device_view(device_id):
+    device = Device.query.get_or_404(device_id)
+    interfaces = []
+    onu_statuses = {}
+    cached_data = {}
+    last_scan_time = None
+
+    try:
+        from pymysql import connect
+        conn = connect(host='localhost', user='oltuser', password='oltpassword', database='oltmanager')
+        cursor = conn.cursor()
+        cursor.execute("SELECT interface, scan_data, scanned_at FROM scan_cache WHERE device_id = %s", (device_id,))
+        for row in cursor.fetchall():
+            iface = row[0]
+            scan_data = json.loads(row[1])
+            cached_data[iface] = scan_data
+            if last_scan_time is None or row[2] > last_scan_time:
+                last_scan_time = row[2]
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        print(f"Cache load error: {e}", file=sys.stderr)
+
+    # Определяем тип соединения
+    from app.gpon_handler import GPONConnection
+    from app.vsol_handler import VSOLConnection
+    if device.device_type == 'gpon':
+        olt = GPONConnection(device.ip, device.username, device.password, device.enable_password)
+    else:
+        olt = OLTConnection(device.ip, device.username, device.password, device.enable_password)
+
+    snmp_interfaces = olt.get_interfaces_snmp()
+
+    if snmp_interfaces is not None:
+        interfaces = snmp_interfaces
+    else:
+        if olt.connect():
+            interfaces, onu_statuses = olt.get_interfaces_and_statuses_telnet()
+            olt.disconnect()
+
+    template_name = 'vsol_device.html' if device.device_type == 'vsol' else 'device.html'
+    return render_template(template_name, device=device, interfaces=interfaces,
+                         onu_statuses=onu_statuses, cached_data=cached_data,
+                         last_scan_time=last_scan_time)
+
 def device_view(device_id):
     device = Device.query.get_or_404(device_id)
     interfaces = []
@@ -239,30 +272,36 @@ def device_view(device_id):
 
     if snmp_interfaces is not None:
         interfaces = snmp_interfaces
+        print(f"[INFO] Page loaded with SNMP interfaces", file=sys.stderr)
     else:
         if olt.connect():
             interfaces, onu_statuses = olt.get_interfaces_and_statuses_telnet()
             olt.disconnect()
+            print(f"[INFO] Page loaded with Telnet interfaces and statuses", file=sys.stderr)
+        else:
+            print(f"[ERROR] Cannot connect to OLT", file=sys.stderr)
 
     template_name = 'vsol_device.html' if device.device_type == 'vsol' else 'device.html'
     return render_template(template_name, device=device, interfaces=interfaces,
                          onu_statuses=onu_statuses, cached_data=cached_data,
                          last_scan_time=last_scan_time)
 
+def _get_device_connection(device):
+    """Возвращает соединение нужного типа для устройства."""
+    if device.device_type == 'gpon':
+        from app.gpon_handler import GPONConnection
+        return GPONConnection(device.ip, device.username, device.password, device.enable_password)
+    elif device.device_type == 'vsol':
+        from app.vsol_handler import VSOLConnection
+        return VSOLConnection(device.ip, device.username, device.password, device.enable_password)
+    else:
+        return OLTConnection(device.ip, device.username, device.password, device.enable_password)
 
 # ---------- API сканирования ----------
 @main.route('/api/device/<int:device_id>/scan_interface/<path:interface>')
 @login_required
 def scan_interface(device_id, interface):
-    import subprocess
     device = Device.query.get_or_404(device_id)
-    # Быстрая проверка доступности
-    try:
-        res = subprocess.run(['/bin/ping', '-c', '2', '-W', '1', device.ip], capture_output=True, timeout=5)
-        if res.returncode != 0:
-            return jsonify({'status': 'error', 'message': f'Устройство {device.ip} недоступно'}), 500
-    except Exception:
-        return jsonify({'status': 'error', 'message': f'Устройство {device.ip} недоступно'}), 500
     olt = _get_device_connection(device)
     if not olt.connect():
         return jsonify({'status': 'error', 'message': 'Ошибка подключения'}), 500
@@ -283,25 +322,12 @@ def scan_interface(device_id, interface):
         onu_list = result_data['onu_macs']
     else:
         onu_list = result_data[1]
-    
-    # Для VSOL используем один запрос show onu opm-diag all (все ONU сразу)
-    if device.device_type == 'vsol':
-        try:
-            all_info = olt.get_all_onu_info(interface)
-            for onu_id in onu_list:
-                signals_data[onu_id] = all_info.get(onu_id)
-        except Exception as e:
-            print(f"[VSOL] Error getting all info: {e}", file=sys.stderr)
-            for onu_id in onu_list:
-                signals_data[onu_id] = None
-    else:
-        # Для EPON/GPON — по одному ONU
-        for onu_id in onu_list:
-            try:
-                info = olt.get_onu_info(interface, onu_id)
-                signals_data[onu_id] = info if info else None
-            except:
-                signals_data[onu_id] = None
+    for onu_id in onu_list:
+        info = olt.get_onu_info(interface, onu_id)
+        if info:
+            signals_data[onu_id] = info
+        else:
+            signals_data[onu_id] = None
 
     olt.disconnect()
 

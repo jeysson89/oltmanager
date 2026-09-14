@@ -254,15 +254,7 @@ def device_view(device_id):
 @main.route('/api/device/<int:device_id>/scan_interface/<path:interface>')
 @login_required
 def scan_interface(device_id, interface):
-    import subprocess
     device = Device.query.get_or_404(device_id)
-    # Быстрая проверка доступности
-    try:
-        res = subprocess.run(['/bin/ping', '-c', '2', '-W', '1', device.ip], capture_output=True, timeout=5)
-        if res.returncode != 0:
-            return jsonify({'status': 'error', 'message': f'Устройство {device.ip} недоступно'}), 500
-    except Exception:
-        return jsonify({'status': 'error', 'message': f'Устройство {device.ip} недоступно'}), 500
     olt = _get_device_connection(device)
     if not olt.connect():
         return jsonify({'status': 'error', 'message': 'Ошибка подключения'}), 500
@@ -283,25 +275,12 @@ def scan_interface(device_id, interface):
         onu_list = result_data['onu_macs']
     else:
         onu_list = result_data[1]
-    
-    # Для VSOL используем один запрос show onu opm-diag all (все ONU сразу)
-    if device.device_type == 'vsol':
-        try:
-            all_info = olt.get_all_onu_info(interface)
-            for onu_id in onu_list:
-                signals_data[onu_id] = all_info.get(onu_id)
-        except Exception as e:
-            print(f"[VSOL] Error getting all info: {e}", file=sys.stderr)
-            for onu_id in onu_list:
-                signals_data[onu_id] = None
-    else:
-        # Для EPON/GPON — по одному ONU
-        for onu_id in onu_list:
-            try:
-                info = olt.get_onu_info(interface, onu_id)
-                signals_data[onu_id] = info if info else None
-            except:
-                signals_data[onu_id] = None
+    for onu_id in onu_list:
+        info = olt.get_onu_info(interface, onu_id)
+        if info:
+            signals_data[onu_id] = info
+        else:
+            signals_data[onu_id] = None
 
     olt.disconnect()
 

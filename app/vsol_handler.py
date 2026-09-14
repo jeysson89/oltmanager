@@ -20,9 +20,9 @@ class VSOLConnection:
         global _vsol_lock
         _vsol_lock.acquire()
         try:
-            self.session = pexpect.spawn(f'/usr/bin/telnet {self.host}', timeout=30, encoding='utf-8')
+            self.session = pexpect.spawn(f'/usr/bin/telnet {self.host}', timeout=15, encoding='utf-8')
             # VSOL запрашивает Login: (с большой L)
-            idx = self.session.expect(['Login:', 'Username:', 'login:', '>', '#'], timeout=15)
+            idx = self.session.expect(['Login:', 'Username:', 'login:', '>', '#'], timeout=8)
             if idx < 3:
                 self.session.sendline(self.username)
                 self.session.expect(['(?i)Password:', '(?i)password:'], timeout=10)
