@@ -81,6 +81,18 @@
         </div>
     </div>
 
+        <h5 class="mt-4">Подсветка сигналов</h5>
+    <div class="row mb-3">
+        <div class="col-md-3">
+            <label for="signal_has_color" class="form-label">Цвет ONU с сигналом</label>
+            <input type="color" class="form-control form-control-color" id="signal_has_color" name="signal_has_color" value="{{ signal_has_color or '#ffffff' }}">
+        </div>
+        <div class="col-md-3">
+            <label for="signal_nosignal_color" class="form-label">Цвет ONU без сигнала</label>
+            <input type="color" class="form-control form-control-color" id="signal_nosignal_color" name="signal_nosignal_color" value="{{ signal_nosignal_color or '#f8d7da' }}">
+        </div>
+    </div>
+
     <button type="submit" class="btn btn-primary">Сохранить и перезапустить</button>
 </form>
 {% endblock %}

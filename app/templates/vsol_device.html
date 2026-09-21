@@ -129,10 +129,16 @@ td:last-child .btn {
     padding: 0;
     margin: 0 2px;
 }
+
+/* Подсветка строк ONU */
+tr.row-no-signal > td { background-color: {{ signal_nosignal_color }} !important; }
+tr.row-has-signal > td { background-color: {{ signal_has_color }} !important; }
 </style>
 
 <script>
 let deviceId = {{ device.id }};
+const SIGNAL_HAS_COLOR = '{{ signal_has_color }}';
+const SIGNAL_NOSIGNAL_COLOR = '{{ signal_nosignal_color }}';
 const cachedData = {{ cached_data|tojson }};
 
 function togglePort(intf) {
@@ -183,15 +189,35 @@ async function fetchOnuInfo(iface, onu, signalCellId, tempCellId) {
         const resp = await fetch(`/api/device/${deviceId}/info/${iface}/${onu}`);
         const data = await resp.json();
         if (data.status === 'ok') {
-            if (data.signal !== null && data.signal !== undefined) {
-                const signalCell = document.getElementById(signalCellId);
+            const signalCell = document.getElementById(signalCellId);
+            const row = signalCell ? signalCell.closest('tr') : null;
+            let hasSignal = false;
+            if (data.signal !== null && data.signal !== undefined && data.signal !== '' && data.signal !== '...' && data.signal !== '-') {
+                hasSignal = true;
                 if (signalCell) {
                     signalCell.textContent = data.signal;
                     const val = parseFloat(data.signal);
                     signalCell.classList.remove('signal-green', 'signal-yellow', 'signal-red');
-                    if (val > -25) signalCell.classList.add('signal-green');
-                    else if (val >= -30) signalCell.classList.add('signal-yellow');
-                    else signalCell.classList.add('signal-red');
+                    if (!isNaN(val)) {
+                        if (val > -25) signalCell.classList.add('signal-green');
+                        else if (val >= -30) signalCell.classList.add('signal-yellow');
+                        else signalCell.classList.add('signal-red');
+                    }
+                }
+            } else {
+                if (signalCell) {
+                    signalCell.textContent = data.signal || '...';
+                    signalCell.classList.remove('signal-green', 'signal-yellow', 'signal-red');
+                    signalCell.classList.add('signal-red');
+                }
+            }
+            if (row) {
+                if (hasSignal) {
+                    row.classList.remove('row-no-signal');
+                    row.classList.add('row-has-signal');
+                } else {
+                    row.classList.remove('row-has-signal');
+                    row.classList.add('row-no-signal');
                 }
             }
             if (data.temperature !== null && data.temperature !== undefined) {

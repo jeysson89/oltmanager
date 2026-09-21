@@ -143,28 +143,46 @@ class OLTConnection:
         except Exception as e:
             return False, f"Ошибка: {e}"
 
-    def delete_onu(self, interface, onu_id):
+    def delete_onu(self, interface, onu_id, save=True):
         full_if = f"epon{interface}:{onu_id}"
+        print(f"[DELETE] === Start delete {full_if} (save={save}) ===", file=sys.stderr)
         try:
             self.session.sendline('enable')
             self.session.expect('#', timeout=10)
+
             self.session.sendline('config')
             self.session.expect('_config#', timeout=10)
-            self.session.sendline(f'interface epon {interface}:{onu_id}')
-            self.session.expect(f'_config_epon{interface}:{onu_id}#', timeout=10)
-            self.session.sendline(f'no epon bind-onu sequence {onu_id}')
+
+            # Контекст порта (без :onu_id)
+            self.session.sendline(f'interface epon {interface}')
+            self.session.expect(f'_config_epon{interface}#', timeout=10)
+
+            cmd = f'no epon bind-onu sequence {onu_id}'
+            self.session.sendline(cmd)
+            print(f"[DELETE] Sent: {cmd}", file=sys.stderr)
             idx = self.session.expect([f'_config_epon{interface}#', '#', pexpect.TIMEOUT], timeout=30)
+            output = self.session.before
+            print(f"[DELETE] Output: {output}", file=sys.stderr)
+
             if idx == 2:
                 return False, f"Таймаут при удалении {full_if}"
+
             self.session.sendline('exit')
             self.session.expect('_config#', timeout=10)
             self.session.sendline('exit')
             self.session.expect('#', timeout=10)
-            self.session.sendline('write all')
-            self.session.expect('OK!', timeout=60)
-            self.session.expect('#', timeout=60)
-            return True, f"ONU {full_if} успешно удалён и конфигурация сохранена"
+
+            if save:
+                self.session.sendline('write all')
+                print(f"[DELETE] Sent: write all", file=sys.stderr)
+                self.session.expect('OK!', timeout=90)
+                print(f"[DELETE] Config saved (OK!)", file=sys.stderr)
+                self.session.expect('#', timeout=90)
+
+            print(f"[DELETE] === Done delete {full_if} ===", file=sys.stderr)
+            return True, f"ONU {full_if} удалён"
         except Exception as e:
+            print(f"[DELETE] ERROR: {e}", file=sys.stderr)
             return False, f"Ошибка удаления {full_if}: {e}"
 
     def get_lan_state(self, interface, onu_id):

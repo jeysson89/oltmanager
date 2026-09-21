@@ -3,6 +3,8 @@
 <h2>Статистика сигналов: {{ device.name }} ({{ device.ip }})</h2>
 
 <style>
+tr.row-no-signal { background-color: {{ signal_nosignal_color }} !important; }
+tr.row-has-signal { background-color: {{ signal_has_color }} !important; }
 .signal-trend-up { color: #28a745; }
 .signal-trend-down { color: #dc3545; }
 .signal-trend-stable { color: #6c757d; }
@@ -31,6 +33,9 @@ tr.row-improved { background-color: #f0fff0 !important; }
 tr.row-improved:hover { background-color: #e0ffe0 !important; }
 tr.row-new { background-color: #f0f8ff !important; }
 tr.row-new:hover { background-color: #e0f0ff !important; }
+
+tr.row-no-signal > td { background-color: {{ signal_nosignal_color }} !important; }
+tr.row-has-signal > td { background-color: {{ signal_has_color }} !important; }
 </style>
 
 {% if not signals %}
@@ -53,10 +58,16 @@ tr.row-new:hover { background-color: #e0f0ff !important; }
     <tbody>
         {% for s in signals %}
         {% set trend_data = get_trend(device.id, s.interface, s.onu_id, s.signal_db) %}
+        {% if s.signal_db is none %}
+        {% set extra_class = 'row-no-signal' %}
+        {% else %}
+        {% set extra_class = 'row-has-signal' %}
+        {% endif %}
         <tr class="
-            {% if trend_data.trend == 'down' and trend_data.diff >= 2 %}row-danger
-            {% elif trend_data.trend == 'up' and trend_data.diff >= 2 %}row-improved
-            {% elif trend_data.is_new %}row-new
+            {% if s.signal_db is none %}row-no-signal{% else %}row-has-signal{% endif %}
+            {% if trend_data.trend == 'down' and trend_data.diff >= 2 %} row-danger
+            {% elif trend_data.trend == 'up' and trend_data.diff >= 2 %} row-improved
+            {% elif trend_data.is_new %} row-new
             {% endif %}
         ">
             <td>{{ s.interface }}</td>

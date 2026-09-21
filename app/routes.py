@@ -245,9 +245,12 @@ def device_view(device_id):
             olt.disconnect()
 
     template_name = 'vsol_device.html' if device.device_type == 'vsol' else 'device.html'
+    from config import Config
     return render_template(template_name, device=device, interfaces=interfaces,
                          onu_statuses=onu_statuses, cached_data=cached_data,
-                         last_scan_time=last_scan_time)
+                         last_scan_time=last_scan_time,
+                         signal_has_color=getattr(Config, 'SIGNAL_HAS_COLOR', '#ffffff'),
+                         signal_nosignal_color=getattr(Config, 'SIGNAL_NOSIGNAL_COLOR', '#f8d7da'))
 
 
 # ---------- API сканирования ----------
@@ -694,8 +697,11 @@ def bulk_delete(device_id):
     if not olt.connect():
         return jsonify({'status': 'error', 'message': 'Ошибка подключения к OLT'}), 500
     results = []
-    for onu in onu_ids:
-        success, msg = olt.delete_onu(interface, onu)
+    total = len(onu_ids)
+    for idx, onu in enumerate(onu_ids):
+        # Сохраняем конфиг только после последнего ONU
+        save = (idx == total - 1)
+        success, msg = olt.delete_onu(interface, onu, save=save)
         results.append({'onu': onu, 'success': success, 'message': msg})
     olt.disconnect()
     return jsonify({'status': 'ok', 'results': results})
@@ -840,7 +846,10 @@ def signal_stats(device_id):
         print(f"Signal stats error: {e}", file=sys.stderr)
         signals = []
     
-    return render_template('signal_stats.html', device=device, signals=signals, filter_interface=filter_interface)
+    from config import Config
+    return render_template('signal_stats.html', device=device, signals=signals, filter_interface=filter_interface,
+                         signal_has_color=getattr(Config, 'SIGNAL_HAS_COLOR', '#ffffff'),
+                         signal_nosignal_color=getattr(Config, 'SIGNAL_NOSIGNAL_COLOR', '#f8d7da'))
 
 # ---------- История входов ----------
 @main.route('/login_history')
@@ -875,6 +884,8 @@ def settings():
             auto_poll_time = request.form.get('auto_poll_time', '02:00')
             monitoring_enabled = request.form.get('monitoring_enabled', 'False')
             monitoring_interval = int(request.form.get('monitoring_interval', '60'))
+            signal_has_color = request.form.get('signal_has_color', '#ffffff')
+            signal_nosignal_color = request.form.get('signal_nosignal_color', '#f8d7da')
             allowed_ips_text = request.form.get('allowed_ips', '')
             allowed_ips = [ip.strip() for ip in allowed_ips_text.split(',') if ip.strip()]
             
@@ -897,6 +908,8 @@ class Config:
     ALLOWED_IPS = {allowed_ips}
     MONITORING_ENABLED = {monitoring_enabled}
     MONITORING_INTERVAL = {monitoring_interval}
+    SIGNAL_HAS_COLOR = '{signal_has_color}'
+    SIGNAL_NOSIGNAL_COLOR = '{signal_nosignal_color}'
 '''
             with open('/opt/oltmanager/config.py', 'w') as f:
                 f.write(new_config_content)
