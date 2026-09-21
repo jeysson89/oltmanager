@@ -829,9 +829,27 @@ def signal_stats(device_id):
                 'address': row[3],
                 'signal_db': row[4],
                 'temperature': row[5],
-                'scanned_at': row[6]
+                'scanned_at': row[6],
+                'days_offline': None,
+                'last_online': None
             })
         
+        # Расчёт дней офлайн для каждого ONU
+        from datetime import datetime
+        for s in signals:
+            if s['signal_db'] is None:
+                try:
+                    cursor.execute('''
+                        SELECT MAX(scanned_at) FROM onu_signal_history
+                        WHERE device_id = %s AND interface = %s AND onu_id = %s AND signal_db IS NOT NULL
+                    ''', (device_id, s['interface'], s['onu_id']))
+                    last_online = cursor.fetchone()[0]
+                    if last_online:
+                        s['days_offline'] = (datetime.now() - last_online).days
+                        s['last_online'] = last_online.strftime('%d.%m.%Y %H:%M')
+                except Exception as e:
+                    print(f"Days offline error: {e}", file=sys.stderr)
+
         for s in signals:
             trend = get_trend(device_id, s['interface'], s['onu_id'], s.get('signal_db') or 0)
             s['priority'] = trend['priority']

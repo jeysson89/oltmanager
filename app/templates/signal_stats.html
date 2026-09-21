@@ -52,6 +52,7 @@ tr.row-has-signal > td { background-color: {{ signal_has_color }} !important; }
             <th>Тренд</th>
             <th>Temp (°C)</th>
             <th>Последний опрос</th>
+            <th>Не в сети</th>
             <th>График (20 замеров)</th>
         </tr>
     </thead>
@@ -90,6 +91,15 @@ tr.row-has-signal > td { background-color: {{ signal_has_color }} !important; }
             </td>
             <td>{{ s.temperature }}</td>
             <td class="small">{{ s.scanned_at.strftime('%d.%m.%Y %H:%M') if s.scanned_at else '' }}</td>
+            <td class="text-center">
+                {% if s.signal_db is none and s.days_offline is not none %}
+                    <span class="badge bg-danger" title="Последний онлайн: {{ s.last_online }}">{{ s.days_offline }} дн.</span>
+                {% elif s.signal_db is not none %}
+                    <span class="badge bg-success">онлайн</span>
+                {% else %}
+                    <span class="text-muted">—</span>
+                {% endif %}
+            </td>
             <td>
                 <div class="mini-chart">
                     {% for bar in trend_data.history %}
