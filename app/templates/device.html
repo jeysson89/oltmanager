@@ -260,15 +260,29 @@ function togglePort(intf) {
 
 function formatMac(mac) {
     if (!mac || typeof mac !== 'string') return mac || '';
-    // Если MAC уже в формате с двоеточиями (VSOL), просто приводим к верхнему регистру
-    if (mac.includes(':')) {
-        return mac.toUpperCase();
-    }
-    // Если MAC в формате с точками (EPON), конвертируем в двоеточия
-    const clean = mac.replace(/\./g, '').toUpperCase();
+    // Приводим к чистому виду: только hex-символы
+    const clean = mac.replace(/[^0-9a-fA-F]/g, '').toUpperCase();
     if (clean.length !== 12) return mac;
     const parts = clean.match(/.{1,2}/g);
     return parts ? parts.join(':') : mac;
+}
+
+function formatMacAll(mac) {
+    if (!mac || typeof mac !== 'string') return mac || '';
+    // SN (HWTC:50203CD3 и подобные) не конвертируем
+    if (mac.startsWith('HWTC') || mac.includes(':')) {
+        const clean = mac.replace(/[^0-9a-fA-F]/g, '').toUpperCase();
+        if (clean.length !== 12) return mac;
+    }
+    const clean = mac.replace(/[^0-9a-fA-F]/g, '').toUpperCase();
+    if (clean.length !== 12) return mac;
+    // Формат 1: XX:XX:XX:XX:XX:XX
+    const colon = clean.match(/.{1,2}/g).join(':');
+    // Формат 2: XXXXXXXXXXXX
+    const plain = clean;
+    // Формат 3: XXXX:XXXXXXXX
+    const short = clean.substring(0, 4) + ':' + clean.substring(4);
+    return `<div>${colon}</div><div>${plain}</div><div>${short}</div>`;
 }
 
 function copyToClipboard(text) {
@@ -395,7 +409,7 @@ function renderCachedData(intf, data) {
             <td><input type="checkbox" class="onu-check" data-onu="${onu}"></td>
             <td>${fullIf}</td>
             <td>${status}</td>
-            <td>${onuMac.startsWith('HWTC') ? onuMac : formatMac(onuMac)}</td>
+            <td>${onuMac.startsWith('HWTC') ? onuMac : formatMacAll(onuMac)}</td>
             <td style="${address === 'Удалён или не внесён' ? 'color: #dc3545; font-style: italic; font-weight: bold; background-color: #fff5f5;' : ''}">${address}</td>
             <td id="${tempCellId}">...</td>
             <td id="${vlanCellId}">-</td>

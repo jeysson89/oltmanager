@@ -76,53 +76,74 @@ def get_client_name_from_mac(mac):
         print(f"[CLIENT] Error searching client: {e}", file=sys.stderr)
     return None
 
+def _normalize_sn_variants(sn):
+    """Генерирует варианты SN для поиска в биллинге."""
+    variants = set()
+    # Оригинал
+    variants.add(sn)
+    # Без двоеточий
+    no_colon = sn.replace(':', '')
+    variants.add(no_colon)
+    # Верхний, нижний регистр
+    variants.add(no_colon.upper())
+    variants.add(no_colon.lower())
+    # С двоеточием в разных регистрах
+    if ':' not in sn and len(no_colon) > 4:
+        variants.add(no_colon[:4] + ':' + no_colon[4:])
+        variants.add(no_colon[:4].upper() + ':' + no_colon[4:].upper())
+        variants.add(no_colon[:4].lower() + ':' + no_colon[4:].lower())
+    # Только hex-часть (без префикса HWTC и т.п.)
+    hex_only = re.sub(r'[^0-9a-fA-F]', '', no_colon)
+    if len(hex_only) >= 8:
+        # Последние 8 символов (часто SN = префикс + 8 hex)
+        variants.add(hex_only[-8:])
+        variants.add(hex_only[-8:].upper())
+        variants.add(hex_only[-8:].lower())
+    return list(variants)
+
+
 def _get_address_by_sn(sn):
-    """Поиск адреса по SN для GPON."""
-    # Приводим SN к нижнему регистру без двоеточия
-    sn_clean = sn.replace(':', '').lower()
-    print(f"[BILLING] Searching address by SN: {sn} -> {sn_clean}", file=sys.stderr)
+    """Поиск адреса по SN для GPON с перебором вариантов."""
+    variants = _normalize_sn_variants(sn)
+    print(f"[BILLING] SN variants to try: {variants}", file=sys.stderr)
     
-    try:
-        conn = _get_db_connection()
-        cursor = conn.cursor()
-        
-        # Ищем devid в dev_fields по key='device_sn' и value=sn_clean
-        cursor.execute("SELECT devid FROM dev_fields WHERE `key` = 'device_sn' AND value = %s", (sn_clean,))
-        row = cursor.fetchone()
-        if not row:
-            print(f"[BILLING] SN not found in dev_fields", file=sys.stderr)
+    for variant in variants:
+        try:
+            conn = _get_db_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT devid FROM dev_fields WHERE `key` = 'device_sn' AND value = %s", (variant,))
+            row = cursor.fetchone()
+            if not row:
+                cursor.close()
+                conn.close()
+                print(f"[BILLING] SN variant '{variant}' not found", file=sys.stderr)
+                continue
+            
+            devid = row[0]
+            print(f"[BILLING] Found devid {devid} for variant '{variant}'", file=sys.stderr)
+            
+            cursor.execute("SELECT uid FROM dev_user WHERE devid = %s", (devid,))
+            user_row = cursor.fetchone()
+            if not user_row:
+                cursor.close()
+                conn.close()
+                print(f"[BILLING] uid not found for devid {devid}", file=sys.stderr)
+                continue
+            
+            uid = user_row[0]
+            
+            cursor.execute("SELECT CONCAT(lane, ' ', house, IF(app != '', CONCAT('/', app), '')) FROM users_view_fsb_address WHERE uid = %s", (uid,))
+            addr_row = cursor.fetchone()
             cursor.close()
             conn.close()
-            return None
-        
-        devid = row[0]
-        print(f"[BILLING] Found devid: {devid}", file=sys.stderr)
-        
-        # Получаем uid
-        cursor.execute("SELECT uid FROM dev_user WHERE devid = %s", (devid,))
-        user_row = cursor.fetchone()
-        if not user_row:
-            print(f"[BILLING] uid not found for devid {devid}", file=sys.stderr)
-            cursor.close()
-            conn.close()
-            return None
-        
-        uid = user_row[0]
-        print(f"[BILLING] Found uid: {uid}", file=sys.stderr)
-        
-        # Получаем адрес
-        cursor.execute("SELECT CONCAT(lane, ' ', house, IF(app != '', CONCAT('/', app), '')) FROM users_view_fsb_address WHERE uid = %s", (uid,))
-        addr_row = cursor.fetchone()
-        cursor.close()
-        conn.close()
-        
-        if addr_row:
-            address = addr_row[0]
-            print(f"[BILLING] Found address by SN: {address}", file=sys.stderr)
-            return address
-        
-        print(f"[BILLING] No address for uid {uid}", file=sys.stderr)
-        return None
-    except Exception as e:
-        print(f"[BILLING] Error searching by SN: {e}", file=sys.stderr)
-        return None
+            
+            if addr_row:
+                address = addr_row[0]
+                print(f"[BILLING] Found address by SN '{variant}': {address}", file=sys.stderr)
+                return address
+        except Exception as e:
+            print(f"[BILLING] Error with SN variant '{variant}': {e}", file=sys.stderr)
+    
+    print(f"[BILLING] No address found for SN {sn}", file=sys.stderr)
+    return None
