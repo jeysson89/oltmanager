@@ -983,6 +983,10 @@ class Config:
                                    auto_poll_enabled=getattr(Config, 'AUTO_POLL_ENABLED', False),
                                    auto_poll_time=getattr(Config, 'AUTO_POLL_TIME', '02:00'),
                                    allowed_ips=', '.join(getattr(Config, 'ALLOWED_IPS', [])),
+                                   monitoring_enabled=getattr(Config, 'MONITORING_ENABLED', False),
+                                   monitoring_interval=getattr(Config, 'MONITORING_INTERVAL', 60),
+                                   signal_has_color=getattr(Config, 'SIGNAL_HAS_COLOR', '#ffffff'),
+                                   signal_nosignal_color=getattr(Config, 'SIGNAL_NOSIGNAL_COLOR', '#f8d7da'),
                                    message=('danger', f'Ошибка сохранения: {e}'))
     return render_template('settings.html',
                            billing_host=Config.BILLING_DB_HOST,
@@ -996,7 +1000,9 @@ class Config:
                            auto_poll_time=getattr(Config, 'AUTO_POLL_TIME', '02:00'),
                            allowed_ips=', '.join(getattr(Config, 'ALLOWED_IPS', [])),
                            monitoring_enabled=getattr(Config, 'MONITORING_ENABLED', False),
-                           monitoring_interval=getattr(Config, 'MONITORING_INTERVAL', 60))
+                           monitoring_interval=getattr(Config, 'MONITORING_INTERVAL', 60),
+                           signal_has_color=getattr(Config, 'SIGNAL_HAS_COLOR', '#ffffff'),
+                           signal_nosignal_color=getattr(Config, 'SIGNAL_NOSIGNAL_COLOR', '#f8d7da'))
 
 # ---------- Перезагрузка сервера ----------
 @main.route('/restart')
