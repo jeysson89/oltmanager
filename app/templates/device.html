@@ -459,6 +459,9 @@ function renderCachedData(intf, data) {
                 <button class="btn btn-sm btn-outline-warning monitorBtn" data-interface="${intf}" data-onu="${onu}" title="Мониторинг ONU">
                     <i class="fas fa-clock"></i>
                 </button>
+                <button class="btn btn-sm btn-outline-secondary clearMacBtn" data-interface="${intf}" data-onu="${onu}" title="Очистить MAC-таблицу ONU">
+                    <i class="fas fa-broom"></i>
+                </button>
                 <button class="btn btn-sm btn-outline-danger rebootBtn" data-interface="${intf}" data-onu="${onu}" title="Перезагрузить">
                     <i class="fas fa-power-off"></i>
                 </button>
@@ -671,7 +674,24 @@ function bindButtonHandlers(tbody) {
             };
         });
     });
+
+    // Очистка MAC-таблицы ONU
+    tbody.querySelectorAll('.clearMacBtn').forEach(b => {
+        b.addEventListener('click', async function() {
+            const iface = this.dataset.interface;
+            const onu = this.dataset.onu;
+            if (!confirm(`Очистить динамическую MAC-таблицу для ONU ${iface}:${onu}?`)) return;
+            this.disabled = true; this.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+            try {
+                const resp = await fetch(`/api/device/${deviceId}/clear_mac/${iface}/${onu}`);
+                const data = await resp.json();
+                showToast(data.message, data.status === 'ok' ? 'success' : 'error');
+            } catch(e) { showToast('Ошибка: ' + e.message, 'error'); }
+            this.disabled = false; this.innerHTML = '<i class="fas fa-broom"></i>';
+        });
+    });
 }
+
 
 // Обработчики кнопок сканирования
 document.querySelectorAll('.scan-btn').forEach(btn => {
@@ -1119,6 +1139,9 @@ document.getElementById('findMacBtn').addEventListener('click', async function()
                 <button class="btn btn-sm btn-outline-warning fm-monitor-btn" data-interface="${r.interface}" data-onu="${r.onu_id}">
                     <i class="fas fa-clock"></i> Мониторинг
                 </button>
+                <button class="btn btn-sm btn-outline-secondary fm-clearmac-btn" data-interface="${r.interface}" data-onu="${r.onu_id}">
+                    <i class="fas fa-broom"></i> Очистить MAC
+                </button>
             `;
             // Скрытые ячейки для MAC/LAN
             const cellsHtml = `
@@ -1301,6 +1324,24 @@ function bindFindMacHandlers() {
                 } catch(e) { showToast('Ошибка: ' + e.message, 'error'); }
                 this.disabled = false;
             };
+        });
+    });
+
+    // Очистка MAC в окне поиска
+    document.querySelectorAll('.fm-clearmac-btn').forEach(b => {
+        b.addEventListener('click', async function() {
+            const iface = this.dataset.interface;
+            const onu = this.dataset.onu;
+            if (!confirm(`Очистить динамическую MAC-таблицу для ONU ${iface}:${onu}?`)) return;
+            this.disabled = true;
+            this.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+            try {
+                const resp = await fetch(`/api/device/${deviceId}/clear_mac/${iface}/${onu}`);
+                const data = await resp.json();
+                showToast(data.message, data.status === 'ok' ? 'success' : 'error');
+            } catch(e) { showToast('Ошибка: ' + e.message, 'error'); }
+            this.disabled = false;
+            this.innerHTML = '<i class="fas fa-broom"></i> Очистить MAC';
         });
     });
 }

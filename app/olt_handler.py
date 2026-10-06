@@ -455,6 +455,55 @@ class OLTConnection:
             print(f"[TELNET] Find MAC error: {e}", file=sys.stderr)
             return None, f"Ошибка: {e}"
 
+    def clear_mac_table(self, interface, onu_id):
+        """Очищает динамическую MAC-таблицу ONU."""
+        full_if = f"epon{interface}:{onu_id}"
+        print(f"[CLEARMAC] === Start clear MAC for {full_if} ===", file=sys.stderr)
+        try:
+            self.session.sendline('enable')
+            self.session.expect('#', timeout=10)
+
+            self.session.sendline('config')
+            self.session.expect('_config#', timeout=10)
+
+            self.session.sendline(f'interface epon {interface}:{onu_id}')
+            self.session.expect(f'_config_epon{interface}:{onu_id}#', timeout=10)
+            print(f"[CLEARMAC] Entered {full_if} context", file=sys.stderr)
+
+            cmd = 'epon onu clear mac address-table dynamic'
+            self.session.sendline(cmd)
+            print(f"[CLEARMAC] Sent: {cmd}", file=sys.stderr)
+
+            idx = self.session.expect([
+                f'_config_epon{interface}:{onu_id}#',
+                '#',
+                pexpect.TIMEOUT
+            ], timeout=30)
+            output = self.session.before
+            print(f"[CLEARMAC] Output: {output}", file=sys.stderr)
+
+            if idx == 2:
+                return False, f"Таймаут при очистке MAC {full_if}"
+
+            if 'Unknown command' in output or 'Invalid' in output or 'Error' in output:
+                # Выходим из конфига перед возвратом
+                self.session.sendline('exit')
+                self.session.expect('_config#', timeout=10)
+                self.session.sendline('exit')
+                self.session.expect('#', timeout=10)
+                return False, f"Команда не поддерживается: {output.strip()[:200]}"
+
+            self.session.sendline('exit')
+            self.session.expect('_config#', timeout=10)
+            self.session.sendline('exit')
+            self.session.expect('#', timeout=10)
+
+            print(f"[CLEARMAC] === Done clear MAC for {full_if} ===", file=sys.stderr)
+            return True, f"MAC-таблица ONU {full_if} очищена"
+        except Exception as e:
+            print(f"[CLEARMAC] ERROR: {e}", file=sys.stderr)
+            return False, f"Ошибка очистки MAC: {e}"
+
     def get_mac_table(self, interface):
         cmd = f'show mac address-table interface {interface}'
         raw = self.send_command(cmd)

@@ -620,6 +620,22 @@ def monitor_result(device_id, task_id):
     return jsonify({'status': 'ok', 'result': result})
 
 
+@main.route('/api/device/<int:device_id>/clear_mac/<path:interface>/<onu>')
+@login_required
+def clear_mac(device_id, interface, onu):
+    device = Device.query.get_or_404(device_id)
+    olt = _get_device_connection(device)
+    if not olt.connect():
+        return jsonify({'status': 'error', 'message': 'Ошибка подключения к OLT'}), 500
+    try:
+        success, message = olt.clear_mac_table(interface, onu)
+    except AttributeError:
+        olt.disconnect()
+        return jsonify({'status': 'error', 'message': 'Функция доступна только для BDCOM EPON'}), 400
+    olt.disconnect()
+    return jsonify({'status': 'ok' if success else 'error', 'message': message})
+
+
 @main.route('/api/device/<int:device_id>/find_mac', methods=['POST'])
 @login_required
 def find_mac_api(device_id):
