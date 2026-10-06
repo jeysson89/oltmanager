@@ -41,7 +41,15 @@ tr.row-has-signal > td { background-color: {{ signal_has_color }} !important; }
 {% if not signals %}
 <div class="alert alert-info">Нет данных. Выполните опрос устройства для сбора статистики.</div>
 {% else %}
-<table class="table table-striped table-sm">
+
+<div class="mb-2 d-flex align-items-center gap-2">
+    <label for="streetFilter" class="form-label mb-0 small text-muted">Фильтр по улице:</label>
+    <input type="text" id="streetFilter" class="form-control form-control-sm" style="max-width: 250px;" placeholder="Начните вводить название..." oninput="filterByStreet()">
+    <button type="button" class="btn btn-sm btn-outline-secondary" onclick="clearStreetFilter()" title="Сбросить">×</button>
+    <span id="filterCounter" class="small text-muted"></span>
+</div>
+
+<table class="table table-striped table-sm" id="signalStatsTable">
     <thead>
         <tr>
             <th>Порт</th>
@@ -124,4 +132,34 @@ tr.row-has-signal > td { background-color: {{ signal_has_color }} !important; }
     <span class="badge" style="background-color: #f0f8ff; color: #0d6efd; border: 1px solid #0d6efd;">● Новый ONU</span>
 </div>
 {% endif %}
+<script>
+function filterByStreet() {
+    var input = document.getElementById('streetFilter');
+    if (!input) return;
+    var filter = input.value.trim().toLowerCase();
+    var table = document.getElementById('signalStatsTable');
+    if (!table) return;
+    var rows = table.querySelectorAll('tbody tr');
+    var visible = 0;
+    rows.forEach(function(row) {
+        var cells = row.querySelectorAll('td');
+        var address = cells[3] ? cells[3].textContent.trim().toLowerCase() : '';
+        if (!filter || address.indexOf(filter) === 0 || address.indexOf(' ' + filter) !== -1) {
+            row.style.display = '';
+            visible++;
+        } else {
+            row.style.display = 'none';
+        }
+    });
+    var counter = document.getElementById('filterCounter');
+    if (counter) {
+        counter.textContent = filter ? 'Найдено: ' + visible + ' из ' + rows.length : '';
+    }
+}
+function clearStreetFilter() {
+    var input = document.getElementById('streetFilter');
+    if (input) { input.value = ''; filterByStreet(); input.focus(); }
+}
+</script>
+
 {% endblock %}
