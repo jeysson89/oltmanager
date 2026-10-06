@@ -409,7 +409,7 @@ function renderCachedData(intf, data) {
             <td><input type="checkbox" class="onu-check" data-onu="${onu}"></td>
             <td>${fullIf}</td>
             <td>${status}</td>
-            <td>${onuMac.startsWith('HWTC') ? onuMac : formatMacAll(onuMac)}</td>
+            <td>${onuMac.startsWith('HWTC') ? onuMac : formatMac(onuMac)}</td>
             <td style="${address === 'Удалён или не внесён' ? 'color: #dc3545; font-style: italic; font-weight: bold; background-color: #fff5f5;' : ''}">${address}</td>
             <td id="${tempCellId}">...</td>
             <td id="${vlanCellId}">-</td>
