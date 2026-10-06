@@ -72,7 +72,6 @@
             <table class="table table-striped table-sm mb-0">
                 <thead>
                     <tr>
-                        <th style="width: 30px;"></th>
                         <th>Port</th>
                         <th>Status</th>
                         <th>MAC ONU/SN</th>
@@ -312,12 +311,22 @@ function renderCachedData(intf, data) {
             <td id="${lanCellId}">-</td>
             <td id="${macCellId}">-</td>
             <td id="${signalCellId}">...</td>
-            <td style="white-space: nowrap; text-align: center;">
-                <div class="action-menu-wrapper">
-                    <button class="action-menu-btn" data-interface="${intf}" data-onu="${onu}" data-mac="${onuMac}" data-mac-cell="${macCellId}" data-vlan-cell="${vlanCellId}" data-lan-cell="${lanCellId}" title="Действия">
-                        <i class="fas fa-ellipsis-v"></i>
-                    </button>
-                </div>
+            <td style="white-space: nowrap;">
+                <button class="btn btn-sm btn-outline-primary macBtn" data-interface="${intf}" data-onu="${onu}" data-mac-cell="${macCellId}" data-vlan-cell="${vlanCellId}" title="MAC-таблица">
+                    <i class="fas fa-search"></i>
+                </button>
+                <button class="btn btn-sm btn-outline-info lanBtn" data-interface="${intf}" data-onu="${onu}" data-lan-cell="${lanCellId}" title="Состояние LAN">
+                    <i class="fas fa-network-wired"></i>
+                </button>
+                <button class="btn btn-sm btn-outline-danger resetBtn" data-interface="${intf}" data-onu="${onu}" title="Сброс ONU">
+                    <i class="fas fa-power-off"></i>
+                </button>
+                <button class="btn btn-sm btn-outline-info chartBtn" data-interface="${intf}" data-onu="${onu}" title="График сигнала">
+                    <i class="fas fa-chart-line"></i>
+                </button>
+                <button class="btn btn-sm btn-outline-secondary configBtn" data-interface="${intf}" data-onu="${onu}" title="Config ONT">
+                    <i class="fas fa-cog"></i>
+                </button>
             </td>
         `;
         tbody.appendChild(row);
@@ -327,134 +336,120 @@ function renderCachedData(intf, data) {
 }
 
 function bindButtonHandlers(tbody) {
-    tbody.querySelectorAll('.action-menu-btn').forEach(btn => {
-        btn.addEventListener('click', function(e) {
-            e.stopPropagation();
-            document.querySelectorAll('.action-menu-dropdown.open').forEach(m => m.remove());
-            
+    // MAC таблица
+    tbody.querySelectorAll('.macBtn').forEach(b => {
+        b.addEventListener('click', async function() {
             const iface = this.dataset.interface;
             const onu = this.dataset.onu;
-            const onuMac = this.dataset.mac;
-            const macCellId = this.dataset.macCell;
-            const vlanCellId = this.dataset.vlanCell;
-            const lanCellId = this.dataset.lanCell;
-            const rect = this.getBoundingClientRect();
-            
-            const menu = document.createElement('div');
-            menu.className = 'action-menu-dropdown open';
-            menu.style.top = (rect.bottom + 4) + 'px';
-            menu.style.left = Math.max(4, rect.right - 220) + 'px';
-            menu.innerHTML = `
-                <a data-action="mac"><i class="fas fa-search text-primary"></i> MAC-таблица</a>
-                <a data-action="lan"><i class="fas fa-network-wired text-info"></i> LAN-статус</a>
-                <a data-action="chart"><i class="fas fa-chart-line text-info"></i> График сигнала</a>
-                <a data-action="config"><i class="fas fa-cog text-secondary"></i> Config ONT</a>
-                <a data-action="monitor"><i class="fas fa-clock text-warning"></i> Мониторинг</a>
-                <hr>
-                <a data-action="reset"><i class="fas fa-power-off text-danger"></i> Сброс ONU</a>
-            `;
-            document.body.appendChild(menu);
-            
-            menu.querySelectorAll('a').forEach(a => {
-                a.addEventListener('click', async function() {
-                    const action = this.dataset.action;
-                    menu.remove();
-                    await handleVsolOnuAction(action, iface, onu, onuMac, macCellId, vlanCellId, lanCellId);
-                });
-            });
+            const macCell = document.getElementById(this.dataset.macCell);
+            const vlanCell = document.getElementById(this.dataset.vlanCell);
+            this.disabled = true; this.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+            try {
+                const resp = await fetch(`/api/device/${deviceId}/vsol_mac/${iface}/${onu}`);
+                const data = await resp.json();
+                if (data.status === 'ok') {
+                    if (data.macs && data.macs.length > 0) {
+                        let macHtml = '';
+                        let vlanHtml = '';
+                        data.macs.forEach((mac, index) => {
+                            macHtml += `<div>${formatMac(mac)}</div>`;
+                            let vlan = (Array.isArray(data.vlan) ? data.vlan[index] : data.vlan) || '';
+                            vlanHtml += `<div>${vlan}</div>`;
+                        });
+                        if (macCell) macCell.innerHTML = macHtml;
+                        if (vlanCell) vlanCell.innerHTML = vlanHtml;
+                        const macToCopy = formatMac(data.macs[0]);
+                        copyToClipboard(macToCopy);
+                    } else {
+                        if (macCell) macCell.textContent = 'Нет MAC';
+                        if (vlanCell) vlanCell.textContent = '-';
+                    }
+                    showToast(data.message, 'success');
+                } else {
+                    showToast(data.message, 'error');
+                }
+            } catch(e) { showToast('Ошибка сети: ' + e.message, 'error'); }
+            this.disabled = false; this.innerHTML = '<i class="fas fa-search"></i>';
+        });
+    });
+    
+    // Состояние LAN
+    tbody.querySelectorAll('.lanBtn').forEach(b => {
+        b.addEventListener('click', async function() {
+            const iface = this.dataset.interface;
+            const onu = this.dataset.onu;
+            const lanCell = document.getElementById(this.dataset.lanCell);
+            this.disabled = true; this.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+            try {
+                const resp = await fetch(`/api/device/${deviceId}/vsol_phy/${iface}/${onu}`);
+                const data = await resp.json();
+                if (data.status === 'ok' && lanCell) {
+                    lanCell.textContent = data.state || 'Link-Up';
+                }
+                showToast(data.message, data.status === 'ok' ? 'success' : 'error');
+            } catch(e) { showToast('Ошибка сети: ' + e.message, 'error'); }
+            this.disabled = false; this.innerHTML = '<i class="fas fa-network-wired"></i>';
+        });
+    });
+    
+    // Reset ONU
+    tbody.querySelectorAll('.resetBtn').forEach(b => {
+        b.addEventListener('click', async function() {
+            if (!confirm('Перезагрузить ONU?')) return;
+            const iface = this.dataset.interface;
+            const onu = this.dataset.onu;
+            this.disabled = true; this.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+            try {
+                const resp = await fetch(`/api/device/${deviceId}/vsol_reset/${iface}/${onu}`);
+                const data = await resp.json();
+                showToast(data.message, data.status === 'ok' ? 'success' : 'error');
+            } catch(e) { showToast('Ошибка сети: ' + e.message, 'error'); }
+            this.disabled = false; this.innerHTML = '<i class="fas fa-power-off"></i>';
+        });
+    });
+    
+    // График сигнала
+    tbody.querySelectorAll('.chartBtn').forEach(b => {
+        b.addEventListener('click', async function() {
+            const iface = this.dataset.interface;
+            const onu = this.dataset.onu;
+            this.disabled = true; this.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+            try {
+                const resp = await fetch(`/api/device/${deviceId}/signal_history/${iface}/${onu}`);
+                if (!resp.ok) { throw new Error(`HTTP ${resp.status}`); }
+                const data = await resp.json();
+                if (data.status === 'ok' && data.history.length > 0) {
+                    showSignalChart(data.history);
+                } else {
+                    showToast('Нет данных для графика', 'warning');
+                }
+            } catch(e) { showToast('Ошибка: ' + e.message, 'error'); }
+            this.disabled = false; this.innerHTML = '<i class="fas fa-chart-line"></i>';
+        });
+    });
+    
+    // Config ONT
+    tbody.querySelectorAll('.configBtn').forEach(b => {
+        b.addEventListener('click', async function() {
+            const iface = this.dataset.interface;
+            const onu = this.dataset.onu;
+            this.disabled = true; this.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+            try {
+                const resp = await fetch(`/api/device/${deviceId}/running_config/${iface}/${onu}`);
+                if (!resp.ok) { throw new Error(`HTTP ${resp.status}`); }
+                const data = await resp.json();
+                if (data.status === 'ok') {
+                    document.getElementById('configOutput').textContent = data.config;
+                    const modal = new bootstrap.Modal(document.getElementById('configModal'));
+                    modal.show();
+                } else {
+                    showToast(data.message, 'error');
+                }
+            } catch(e) { showToast('Ошибка: ' + e.message, 'error'); }
+            this.disabled = false; this.innerHTML = '<i class="fas fa-cog"></i>';
         });
     });
 }
-
-async function handleVsolOnuAction(action, iface, onu, onuMac, macCellId, vlanCellId, lanCellId) {
-    const macCell = macCellId ? document.getElementById(macCellId) : null;
-    const vlanCell = vlanCellId ? document.getElementById(vlanCellId) : null;
-    const lanCell = lanCellId ? document.getElementById(lanCellId) : null;
-    
-    try {
-        if (action === 'mac') {
-            const resp = await fetch(`/api/device/${deviceId}/vsol_mac/${iface}/${onu}`);
-            const data = await resp.json();
-            if (data.status === 'ok' && data.macs && data.macs.length > 0) {
-                let macHtml = '', vlanHtml = '';
-                data.macs.forEach((mac, i) => {
-                    macHtml += `<div>${formatMac(mac)}</div>`;
-                    let vlan = (Array.isArray(data.vlan) ? data.vlan[i] : data.vlan) || '';
-                    vlanHtml += `<div>${vlan}</div>`;
-                });
-                if (macCell) macCell.innerHTML = macHtml;
-                if (vlanCell) vlanCell.innerHTML = vlanHtml;
-                copyToClipboard(formatMac(data.macs[0]));
-                showToast(data.message || 'MAC получен', 'success');
-            } else {
-                if (macCell) macCell.textContent = 'Нет MAC';
-                showToast(data.message || 'MAC-адреса не найдены', 'warning');
-            }
-        } else if (action === 'lan') {
-            const resp = await fetch(`/api/device/${deviceId}/vsol_phy/${iface}/${onu}`);
-            const data = await resp.json();
-            if (data.status === 'ok' && lanCell) {
-                lanCell.textContent = data.state || 'OK';
-                showToast(data.message || 'OK', 'success');
-            } else showToast(data.message || 'Ошибка', 'error');
-        } else if (action === 'chart') {
-            const resp = await fetch(`/api/device/${deviceId}/signal_history/${iface}/${onu}`);
-            const data = await resp.json();
-            if (data.status === 'ok' && data.history.length > 0) {
-                showSignalChart(data.history);
-            } else showToast('Нет данных для графика', 'warning');
-        } else if (action === 'config') {
-            const resp = await fetch(`/api/device/${deviceId}/running_config/${iface}/${onu}`);
-            const data = await resp.json();
-            if (data.status === 'ok') {
-                document.getElementById('configOutput').textContent = data.config;
-                new bootstrap.Modal(document.getElementById('configModal')).show();
-            } else showToast(data.message, 'error');
-        } else if (action === 'monitor') {
-            document.getElementById('monitorTarget').textContent = iface + ':' + onu;
-            const modal = new bootstrap.Modal(document.getElementById('monitorModal'));
-            modal.show();
-            document.getElementById('startMonitor').onclick = async function() {
-                const duration = parseInt(document.getElementById('monitorDuration').value);
-                const interval = parseInt(document.getElementById('monitorInterval').value);
-                if (!duration || !interval) { showToast('Введите корректные значения', 'warning'); return; }
-                this.disabled = true;
-                try {
-                    const resp = await fetch(`/api/device/${deviceId}/monitor_start`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ interface: iface, onu_id: onu, duration: duration, interval: interval })
-                    });
-                    const data = await resp.json();
-                    if (data.status === 'ok') {
-                        showToast(data.message, 'success');
-                        modal.hide();
-                        pollMonitorStatus(data.task_id, duration * 60);
-                    } else showToast(data.message, 'error');
-                } catch(e) { showToast('Ошибка: ' + e.message, 'error'); }
-                this.disabled = false;
-            };
-        } else if (action === 'reset') {
-            if (!confirm('Перезагрузить ONU?')) return;
-            const resp = await fetch(`/api/device/${deviceId}/vsol_reset/${iface}/${onu}`);
-            const data = await resp.json();
-            showToast(data.message, data.status === 'ok' ? 'success' : 'error');
-        }
-    } catch(e) {
-        showToast('Ошибка: ' + e.message, 'error');
-    }
-}
-
-document.addEventListener('click', function(e) {
-    if (!e.target.closest('.action-menu-btn') && !e.target.closest('.action-menu-dropdown')) {
-        document.querySelectorAll('.action-menu-dropdown.open').forEach(m => m.remove());
-    }
-});
-window.addEventListener('scroll', function() {
-    document.querySelectorAll('.action-menu-dropdown.open').forEach(m => m.remove());
-}, true);
-
-
 
 // Обработчики сканирования
 document.querySelectorAll('.scan-btn').forEach(btn => {
