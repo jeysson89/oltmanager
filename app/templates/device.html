@@ -1,6 +1,11 @@
 {% extends "base.html" %}
 {% block content %}
-<h2>Устройство: {{ device.name }} ({{ device.ip }})</h2>
+<div class="d-flex justify-content-between align-items-center mb-2">
+    <h2 class="mb-0">Устройство: {{ device.name }} ({{ device.ip }})</h2>
+    <button class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#findMacModal" title="Найти MAC в OLT">
+        <i class="fas fa-hat-wizard"></i> Найти MAC
+    </button>
+</div>
 {% if last_scan_time %}
 <div class="text-muted mb-2">
     <i class="fas fa-clock"></i> Последний опрос: {{ last_scan_time.strftime('%d.%m.%Y %H:%M') }}
@@ -8,6 +13,25 @@
 {% endif %}
 
 <div id="toast-container" style="position: fixed; top: 20px; right: 20px; z-index: 9999;"></div>
+
+<!-- Модальное окно поиска MAC -->
+<div class="modal fade" id="findMacModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-hat-wizard"></i> Поиск MAC в OLT</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="input-group mb-3">
+                    <input type="text" class="form-control" id="findMacInput" placeholder="XX:XX:XX:XX:XX:XX или 1c3b.f38e.3e65">
+                    <button class="btn btn-primary" id="findMacBtn">Найти</button>
+                </div>
+                <div id="findMacResult"></div>
+            </div>
+        </div>
+    </div>
+</div>
 
 <!-- Модальное окно для графика сигнала -->
 <div class="modal fade" id="signalChartModal" tabindex="-1" aria-hidden="true">
@@ -1032,6 +1056,253 @@ function showMonitorResult(result) {
     </div></div>`;
     document.body.appendChild(resultModal);
     new bootstrap.Modal(resultModal).show();
+}
+
+// === Поиск MAC в OLT ===
+document.getElementById('findMacBtn').addEventListener('click', async function() {
+    const input = document.getElementById('findMacInput');
+    const result = document.getElementById('findMacResult');
+    const mac = input.value.trim();
+    if (!mac) {
+        result.innerHTML = '<div class="alert alert-warning">Введите MAC-адрес</div>';
+        return;
+    }
+    this.disabled = true;
+    this.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+    result.innerHTML = '<div class="text-muted">Поиск...</div>';
+    try {
+        const resp = await fetch(`/api/device/${deviceId}/find_mac`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mac: mac })
+        });
+        const data = await resp.json();
+        if (data.status === 'ok') {
+            const r = data.result;
+            result.innerHTML = `
+                <div class="alert alert-success">
+                    <div><strong>Найден:</strong> ${r.mac}</div>
+                    <div><strong>Порт:</strong> ${r.port}</div>
+                    <div><strong>VLAN:</strong> ${r.vlan}</div>
+                </div>
+                <h6>Действия для ${r.port}:</h6>
+                <div class="d-flex flex-wrap gap-1" id="findMacActions"></div>
+            `;
+            // Формируем кнопки
+            const actions = document.getElementById('findMacActions');
+            const safeId = `findmac_${r.interface.replace('/','_')}_${r.onu_id}`;
+            actions.innerHTML = `
+                <button class="btn btn-sm btn-outline-primary fm-mac-btn" data-interface="${r.interface}" data-onu="${r.onu_id}" data-target="fm-mac-${safeId}">
+                    <i class="fas fa-search"></i> MAC
+                </button>
+                <button class="btn btn-sm btn-outline-info fm-lan-btn" data-interface="${r.interface}" data-onu="${r.onu_id}" data-target="fm-lan-${safeId}">
+                    <i class="fas fa-network-wired"></i> LAN
+                </button>
+                <button class="btn btn-sm btn-outline-success fm-g1-btn" data-interface="${r.interface}" data-onu="${r.onu_id}">
+                    <i class="fas fa-tachometer-alt"></i> 1G
+                </button>
+                <button class="btn btn-sm btn-outline-danger fm-reboot-btn" data-interface="${r.interface}" data-onu="${r.onu_id}">
+                    <i class="fas fa-power-off"></i> Reboot
+                </button>
+                <button class="btn btn-sm btn-outline-warning fm-blacklist-btn" data-interface="${r.interface}" data-onu="${r.onu_id}" data-mac="${r.mac}">
+                    <i class="fas fa-ban"></i> Blacklist
+                </button>
+                <button class="btn btn-sm btn-outline-dark fm-delete-btn" data-interface="${r.interface}" data-onu="${r.onu_id}">
+                    <i class="fas fa-trash"></i> Удалить
+                </button>
+                <button class="btn btn-sm btn-outline-info fm-chart-btn" data-interface="${r.interface}" data-onu="${r.onu_id}">
+                    <i class="fas fa-chart-line"></i> График
+                </button>
+                <button class="btn btn-sm btn-outline-secondary fm-config-btn" data-interface="${r.interface}" data-onu="${r.onu_id}">
+                    <i class="fas fa-cog"></i> Config
+                </button>
+                <button class="btn btn-sm btn-outline-warning fm-monitor-btn" data-interface="${r.interface}" data-onu="${r.onu_id}">
+                    <i class="fas fa-clock"></i> Мониторинг
+                </button>
+            `;
+            // Скрытые ячейки для MAC/LAN
+            const cellsHtml = `
+                <div style="display:none">
+                    <div id="fm-mac-${safeId}"></div>
+                    <div id="fm-lan-${safeId}"></div>
+                </div>
+                <div class="mt-2 small text-muted">
+                    MAC: <span id="fm-mac-display-${safeId}">—</span> |
+                    VLAN: <span id="fm-vlan-display-${safeId}">—</span> |
+                    LAN: <span id="fm-lan-display-${safeId}">—</span>
+                </div>
+            `;
+            result.insertAdjacentHTML('beforeend', cellsHtml);
+            bindFindMacHandlers();
+        } else {
+            result.innerHTML = `<div class="alert alert-danger">${data.message}</div>`;
+        }
+    } catch(e) {
+        result.innerHTML = `<div class="alert alert-danger">Ошибка: ${e.message}</div>`;
+    }
+    this.disabled = false;
+    this.innerHTML = 'Найти';
+});
+
+function bindFindMacHandlers() {
+    // MAC
+    document.querySelectorAll('.fm-mac-btn').forEach(b => {
+        b.addEventListener('click', async function() {
+            const iface = this.dataset.interface;
+            const onu = this.dataset.onu;
+            const safeId = `findmac_${iface.replace('/','_')}_${onu}`;
+            this.disabled = true;
+            try {
+                const resp = await fetch(`/api/device/${deviceId}/mac/${iface}/${onu}`);
+                const data = await resp.json();
+                if (data.status === 'ok') {
+                    const macs = Array.isArray(data.macs) ? data.macs.map(formatMac).join(', ') : formatMac(data.macs);
+                    const vlans = Array.isArray(data.vlan) ? data.vlan.join(', ') : (data.vlan || '—');
+                    document.getElementById(`fm-mac-display-${safeId}`).textContent = macs;
+                    document.getElementById(`fm-vlan-display-${safeId}`).textContent = vlans;
+                    showToast('MAC получен', 'success');
+                } else { showToast(data.message, 'error'); }
+            } catch(e) { showToast('Ошибка: ' + e.message, 'error'); }
+            this.disabled = false;
+        });
+    });
+    // LAN
+    document.querySelectorAll('.fm-lan-btn').forEach(b => {
+        b.addEventListener('click', async function() {
+            const iface = this.dataset.interface;
+            const onu = this.dataset.onu;
+            const safeId = `findmac_${iface.replace('/','_')}_${onu}`;
+            this.disabled = true;
+            try {
+                const resp = await fetch(`/api/device/${deviceId}/lan/${iface}/${onu}`);
+                const data = await resp.json();
+                if (data.status === 'ok') {
+                    document.getElementById(`fm-lan-display-${safeId}`).textContent = data.state;
+                    showToast('LAN получен', 'success');
+                } else { showToast(data.message, 'error'); }
+            } catch(e) { showToast('Ошибка: ' + e.message, 'error'); }
+            this.disabled = false;
+        });
+    });
+    // 1G
+    document.querySelectorAll('.fm-g1-btn').forEach(b => {
+        b.addEventListener('click', async function() {
+            if (!confirm('Установить SLA 1G?')) return;
+            const iface = this.dataset.interface;
+            const onu = this.dataset.onu;
+            this.disabled = true;
+            try {
+                const resp = await fetch(`/api/device/${deviceId}/set1g/${iface}/${onu}`);
+                const data = await resp.json();
+                showToast(data.message, data.status === 'ok' ? 'success' : 'error');
+            } catch(e) { showToast('Ошибка: ' + e.message, 'error'); }
+            this.disabled = false;
+        });
+    });
+    // Reboot
+    document.querySelectorAll('.fm-reboot-btn').forEach(b => {
+        b.addEventListener('click', async function() {
+            if (!confirm('Перезагрузить ONU?')) return;
+            const iface = this.dataset.interface;
+            const onu = this.dataset.onu;
+            this.disabled = true;
+            try {
+                const resp = await fetch(`/api/device/${deviceId}/reboot/${iface}/${onu}`);
+                const data = await resp.json();
+                showToast(data.message, data.status === 'ok' ? 'success' : 'error');
+            } catch(e) { showToast('Ошибка: ' + e.message, 'error'); }
+            this.disabled = false;
+        });
+    });
+    // Blacklist
+    document.querySelectorAll('.fm-blacklist-btn').forEach(b => {
+        b.addEventListener('click', async function() {
+            const mac = this.dataset.mac;
+            if (!mac) { showToast('MAC не найден', 'warning'); return; }
+            if (!confirm(`Добавить ${mac} в blacklist?`)) return;
+            const iface = this.dataset.interface;
+            const onu = this.dataset.onu;
+            this.disabled = true;
+            try {
+                const resp = await fetch(`/api/device/${deviceId}/blacklist/${iface}/${onu}/${mac}`);
+                const data = await resp.json();
+                showToast(data.message, data.status === 'ok' ? 'success' : 'error');
+            } catch(e) { showToast('Ошибка: ' + e.message, 'error'); }
+            this.disabled = false;
+        });
+    });
+    // Delete
+    document.querySelectorAll('.fm-delete-btn').forEach(b => {
+        b.addEventListener('click', async function() {
+            if (!confirm('Удалить ONU? Это необратимо!')) return;
+            const iface = this.dataset.interface;
+            const onu = this.dataset.onu;
+            this.disabled = true;
+            try {
+                const resp = await fetch(`/api/device/${deviceId}/delete/${iface}/${onu}`);
+                const data = await resp.json();
+                showToast(data.message, data.status === 'ok' ? 'success' : 'error');
+            } catch(e) { showToast('Ошибка: ' + e.message, 'error'); }
+            this.disabled = false;
+        });
+    });
+    // График
+    document.querySelectorAll('.fm-chart-btn').forEach(b => {
+        b.addEventListener('click', async function() {
+            const iface = this.dataset.interface;
+            const onu = this.dataset.onu;
+            this.disabled = true;
+            try {
+                const resp = await fetch(`/api/device/${deviceId}/signal_history/${iface}/${onu}`);
+                const data = await resp.json();
+                if (data.status === 'ok' && data.history.length > 0) {
+                    showSignalChart(data.history);
+                } else { showToast('Нет данных', 'warning'); }
+            } catch(e) { showToast('Ошибка: ' + e.message, 'error'); }
+            this.disabled = false;
+        });
+    });
+    // Config
+    document.querySelectorAll('.fm-config-btn').forEach(b => {
+        b.addEventListener('click', async function() {
+            const iface = this.dataset.interface;
+            const onu = this.dataset.onu;
+            this.disabled = true;
+            try {
+                const resp = await fetch(`/api/device/${deviceId}/running_config/${iface}/${onu}`);
+                const data = await resp.json();
+                if (data.status === 'ok') {
+                    document.getElementById('configOutput').textContent = data.config;
+                    new bootstrap.Modal(document.getElementById('configModal')).show();
+                } else { showToast(data.message, 'error'); }
+            } catch(e) { showToast('Ошибка: ' + e.message, 'error'); }
+            this.disabled = false;
+        });
+    });
+    // Мониторинг
+    document.querySelectorAll('.fm-monitor-btn').forEach(b => {
+        b.addEventListener('click', function() {
+            const iface = this.dataset.interface;
+            const onu = this.dataset.onu;
+            document.getElementById('monitorTarget').textContent = iface + ':' + onu;
+            new bootstrap.Modal(document.getElementById('monitorModal')).show();
+            document.getElementById('startMonitor').onclick = async function() {
+                const duration = parseInt(document.getElementById('monitorDuration').value);
+                const interval = parseInt(document.getElementById('monitorInterval').value);
+                this.disabled = true;
+                try {
+                    const resp = await fetch(`/api/device/${deviceId}/monitor_start`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ interface: iface, onu_id: onu, duration: duration, interval: interval })
+                    });
+                    const data = await resp.json();
+                    showToast(data.message, data.status === 'ok' ? 'success' : 'error');
+                } catch(e) { showToast('Ошибка: ' + e.message, 'error'); }
+                this.disabled = false;
+            };
+        });
+    });
 }
 </script>
 {% endblock %}

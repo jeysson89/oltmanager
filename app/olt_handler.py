@@ -425,6 +425,36 @@ class OLTConnection:
             print(f"[TELNET] Error getting stats: {e}", file=sys.stderr)
             return None
 
+    def find_mac(self, mac):
+        """Ищет MAC-адрес в таблице коммутации OLT."""
+        # Нормализуем MAC в формат xxxx.xxxx.xxxx
+        clean = re.sub(r'[^0-9a-fA-F]', '', mac).lower()
+        if len(clean) != 12:
+            return None, "Неверный формат MAC (нужно 12 hex-символов)"
+        formatted = f"{clean[0:4]}.{clean[4:8]}.{clean[8:12]}"
+        
+        cmd = f'show mac add {formatted}'
+        print(f"[TELNET] Find MAC: {cmd}", file=sys.stderr)
+        try:
+            raw = self.send_command(cmd)
+            print(f"[TELNET] Find MAC response:\n{raw}", file=sys.stderr)
+            
+            # Ищем строку вида: 101  1c3b.f38e.3e65  DYNAMIC  epon0/1:1
+            for line in raw.splitlines():
+                match = re.search(r'(\d+)\s+([0-9a-fA-F]{4}\.[0-9a-fA-F]{4}\.[0-9a-fA-F]{4})\s+\S+\s+epon(\d+/\d+):(\d+)', line, re.IGNORECASE)
+                if match:
+                    return {
+                        'vlan': match.group(1),
+                        'mac': match.group(2),
+                        'interface': match.group(3),
+                        'onu_id': match.group(4),
+                        'port': f"epon{match.group(3)}:{match.group(4)}"
+                    }, None
+            return None, "MAC не найден в таблице коммутации"
+        except Exception as e:
+            print(f"[TELNET] Find MAC error: {e}", file=sys.stderr)
+            return None, f"Ошибка: {e}"
+
     def get_mac_table(self, interface):
         cmd = f'show mac address-table interface {interface}'
         raw = self.send_command(cmd)
