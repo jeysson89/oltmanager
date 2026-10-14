@@ -280,14 +280,13 @@ def scan_interface(device_id, interface):
         cache_key = f"{device_id}:{interface}"
         _vsol_cache_global.pop(cache_key, None)
     
-    # Собираем сигналы ДО отключения (иначе данные не получить)
+    # Собираем сигналы ДО отключения только для VSOL (там один запрос на все ONU)
     signals_data = {}
     if isinstance(result_data, dict) and 'onu_macs' in result_data:
         onu_list = result_data['onu_macs']
     else:
         onu_list = result_data[1]
     
-    # Для VSOL используем один запрос show onu opm-diag all (все ONU сразу)
     if device.device_type == 'vsol':
         try:
             all_info = olt.get_all_onu_info(interface)
@@ -297,14 +296,7 @@ def scan_interface(device_id, interface):
             print(f"[VSOL] Error getting all info: {e}", file=sys.stderr)
             for onu_id in onu_list:
                 signals_data[onu_id] = None
-    else:
-        # Для EPON/GPON — по одному ONU
-        for onu_id in onu_list:
-            try:
-                info = olt.get_onu_info(interface, onu_id)
-                signals_data[onu_id] = info if info else None
-            except:
-                signals_data[onu_id] = None
+    # Для EPON/GPON — сигналы подгружаются на клиенте асинхронно
 
     olt.disconnect()
 
@@ -316,36 +308,8 @@ def scan_interface(device_id, interface):
         # Формат от EPON (кортеж)
         onu_statuses, onu_macs = result_data
 
+    # Адреса подгружаются на клиенте через /api/device/<id>/address/<intf>/<onu>
     addresses = {}
-    for onu_id, mac_data in onu_macs.items():
-        address = None
-        if isinstance(mac_data, str):
-            address = get_address_from_billing(mac_data)
-        elif isinstance(mac_data, dict):
-            # Для GPON — SN, для VSOL — MAC
-            sn = mac_data.get('sn', '')
-            mac = mac_data.get('mac', '')
-            if sn:
-                address = get_address_from_billing(sn)
-            elif mac:
-                address = get_address_from_billing(mac)
-        if address:
-            addresses[onu_id] = address
-        else:
-            # Ищем в базе клиентов
-            client_name = None
-            if isinstance(mac_data, str):
-                from app.billing import get_client_name_from_mac
-                client_name = get_client_name_from_mac(mac_data)
-            elif isinstance(mac_data, dict):
-                mac = mac_data.get('mac', '')
-                if mac:
-                    from app.billing import get_client_name_from_mac
-                    client_name = get_client_name_from_mac(mac)
-            if client_name:
-                addresses[onu_id] = client_name
-            else:
-                addresses[onu_id] = 'Удалён или не внесён'
 
     result = {
         'status': 'ok',
@@ -370,28 +334,55 @@ def scan_interface(device_id, interface):
     except Exception as e:
         print(f"Cache save error: {e}", file=sys.stderr)
 
-    # Сохраняем сигналы для всех ONU (используем собранные до disconnect данные)
+    return jsonify(result)
+
+
+@main.route('/api/device/<int:device_id>/address/<path:interface>/<onu>')
+@login_required
+def get_onu_address(device_id, interface, onu):
+    """Возвращает адрес абонента для ONU (из биллинга или клиентов)."""
+    from app.billing import get_address_from_billing, get_client_name_from_mac
+    from pymysql import connect
+    device = Device.query.get_or_404(device_id)
+    # Берём MAC/SN из scan_cache
+    mac_data = None
     try:
-        from pymysql import connect
         conn = connect(host='localhost', user='oltuser', password='oltpassword', database='oltmanager')
         cursor = conn.cursor()
-        for onu_id, mac_data in onu_macs.items():
-            info = signals_data.get(onu_id)
-            signal = info.get('signal') if info else None
-            temperature = info.get('temperature') if info else None
-            mac = mac_data if isinstance(mac_data, str) else (mac_data.get('mac') or mac_data.get('sn') or '')
-            address = addresses.get(onu_id, '')
-            cursor.execute("""
-                INSERT INTO onu_signal_history (device_id, interface, onu_id, mac_onu, address, signal_db, temperature)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-            """, (device_id, interface, onu_id, mac, address, signal, temperature))
-        conn.commit()
+        cursor.execute("SELECT scan_data FROM scan_cache WHERE device_id = %s AND interface = %s", (device_id, interface))
+        row = cursor.fetchone()
         cursor.close()
         conn.close()
+        if row:
+            scan = json.loads(row[0])
+            mac_data = scan.get('onu_macs', {}).get(onu)
     except Exception as e:
-        print(f"Signal history save error: {e}", file=sys.stderr)
+        print(f"Address cache error: {e}", file=sys.stderr)
 
-    return jsonify(result)
+    if not mac_data:
+        return jsonify({'status': 'ok', 'address': '—'})
+
+    mac = ''
+    sn = ''
+    if isinstance(mac_data, str):
+        mac = mac_data
+    elif isinstance(mac_data, dict):
+        mac = mac_data.get('mac', '')
+        sn = mac_data.get('sn', '')
+
+    address = None
+    if sn:
+        address = get_address_from_billing(sn)
+    elif mac:
+        address = get_address_from_billing(mac)
+
+    if not address and mac:
+        address = get_client_name_from_mac(mac)
+
+    if not address:
+        address = 'Удалён или не внесён'
+
+    return jsonify({'status': 'ok', 'address': address})
 
 
 @main.route('/api/device/<int:device_id>/signal_history/<path:interface>/<onu>')

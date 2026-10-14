@@ -389,6 +389,26 @@ function showToast(message, type = 'success') {
     }, 5000);
 }
 
+async function fetchOnuAddress(iface, onu, addressCellSelector) {
+    try {
+        const resp = await fetch(`/api/device/${deviceId}/address/${iface}/${onu}`);
+        const data = await resp.json();
+        if (data.status === 'ok') {
+            const cell = document.querySelector(addressCellSelector);
+            if (cell) {
+                cell.textContent = data.address;
+                if (data.address === 'Удалён или не внесён') {
+                    cell.style.cssText = 'color: #dc3545; font-style: italic; font-weight: bold; background-color: #fff5f5;';
+                } else {
+                    cell.style.cssText = '';
+                }
+            }
+        }
+    } catch(e) {
+        console.error('Address error:', e);
+    }
+}
+
 async function fetchOnuInfo(iface, onu, signalCellId, tempCellId) {
     try {
         const resp = await fetch(`/api/device/${deviceId}/info/${iface}/${onu}`);
@@ -473,7 +493,7 @@ function renderCachedData(intf, data) {
             <td>${fullIf}</td>
             <td>${status}</td>
             <td>${onuMac.startsWith('HWTC') ? onuMac : formatMac(onuMac)}</td>
-            <td style="${address === 'Удалён или не внесён' ? 'color: #dc3545; font-style: italic; font-weight: bold; background-color: #fff5f5;' : ''}">${address}</td>
+            <td data-address-cell="${safeId}" style="${address === 'Удалён или не внесён' ? 'color: #dc3545; font-style: italic; font-weight: bold; background-color: #fff5f5;' : ''}">${address || '...'}</td>
             <td id="${tempCellId}">...</td>
             <td id="${vlanCellId}">-</td>
             <td id="${lanCellId}">-</td>
@@ -698,6 +718,7 @@ document.querySelectorAll('.scan-btn').forEach(btn => {
             for (const onu of Object.keys(data.onu_macs || {})) {
                 const safeId = `epon${intf.replace('/','_')}_${onu}`;
                 fetchOnuInfo(intf, onu, `signal-${safeId}`, `temp-${safeId}`);
+                fetchOnuAddress(intf, onu, `[data-address-cell="${safeId}"]`);
             }
         } catch(err) {
             console.error(err);
