@@ -509,8 +509,7 @@ function bindButtonHandlers(tbody) {
             
             const menu = document.createElement('div');
             menu.className = 'action-menu-dropdown open';
-            menu.style.top = (rect.bottom + 4) + 'px';
-            menu.style.left = Math.max(4, rect.right - 220) + 'px';
+            menu.style.visibility = 'hidden';
             menu.innerHTML = `
                 <a data-action="mac"><i class="fas fa-search text-primary"></i> MAC-таблица</a>
                 <a data-action="lan"><i class="fas fa-network-wired text-info"></i> LAN-статус</a>
@@ -525,6 +524,18 @@ function bindButtonHandlers(tbody) {
                 <a data-action="delete"><i class="fas fa-trash text-dark"></i> Удалить</a>
             `;
             document.body.appendChild(menu);
+            
+            // Позиционируем: если места снизу мало — открываем вверх
+            const menuHeight = menu.offsetHeight;
+            const spaceBelow = window.innerHeight - rect.bottom;
+            const openUp = spaceBelow < menuHeight + 10;
+            if (openUp) {
+                menu.style.top = (rect.top - menuHeight - 4) + 'px';
+            } else {
+                menu.style.top = (rect.bottom + 4) + 'px';
+            }
+            menu.style.left = Math.max(4, rect.right - 220) + 'px';
+            menu.style.visibility = 'visible';
             
             menu.querySelectorAll('a').forEach(a => {
                 a.addEventListener('click', async function() {
