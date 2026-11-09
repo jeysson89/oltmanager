@@ -1,11 +1,70 @@
 {% extends "base.html" %}
 {% block content %}
-<h2>Устройство: {{ device.name }} ({{ device.ip }})</h2>
+<!-- Модальное окно мониторинга ONU -->
+<div class="modal fade" id="monitorModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Мониторинг ONU <span id="monitorTarget"></span></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>Сбор статистики и состояния ONU по расписанию ниже.</p>
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label for="monitorDuration" class="form-label">Длительность (мин)</label>
+                        <input type="number" class="form-control" id="monitorDuration" value="10" min="1" max="60">
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label for="monitorInterval" class="form-label">Интервал (мин)</label>
+                        <input type="number" class="form-control" id="monitorInterval" value="1" min="1" max="5">
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="button" class="btn btn-warning" id="startMonitor">Запустить</button>
+            </div>
+        </div>
+    </div>
+</div>
+<h2>Устройство: {{ device.name }} ({{ device.ip }}) <span id="oltHealthBadge" class="badge ms-2" style="font-size: 0.6em; background: var(--bg-hover); color: var(--text-primary); border: 1px solid var(--border);"></span></h2>
+<div class="mb-3">
+    <button class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#findMacModal" title="Найти MAC в OLT (SNMP)">
+        <i class="fas fa-hat-wizard"></i> Найти MAC
+    </button>
+</div>
 {% if last_scan_time %}
 <div class="text-muted mb-2">
     <i class="fas fa-clock"></i> Последний опрос: {{ last_scan_time.strftime('%d.%m.%Y %H:%M') }}
 </div>
 {% endif %}
+{% if ui_auto_refresh_enabled|default(true) %}
+<div class="text-muted small mb-2" id="liveRefreshWrap">
+    <i class="fas fa-circle text-success" style="font-size: 8px;"></i>
+{% endif %}
+<!-- Живая панель мониторинга ONU -->
+<div class="card mb-3 border-warning" id="monitorLivePanel" style="display: none;">
+    <div class="card-body py-2">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <div>
+                <span class="badge bg-warning text-dark" id="mlpStatus">выполняется</span>
+                <strong class="ms-1">Мониторинг <span id="mlpTarget"></span></strong>
+            </div>
+            <div class="btn-group">
+                <button class="btn btn-sm btn-outline-danger" id="mlpStopBtn" onclick="stopMonitorTask()"><i class="fas fa-stop"></i> Остановить</button>
+                <button class="btn btn-sm btn-outline-secondary" onclick="closeMonitorPanel()" title="Скрыть панель"><i class="fas fa-times"></i> Закрыть</button>
+                <button class="btn btn-sm btn-outline-primary" id="mlpResultBtn" style="display:none;"><i class="fas fa-file-alt"></i> Результат</button>
+            </div>
+        </div>
+        <div class="progress mt-2" style="height: 6px;">
+            <div class="progress-bar bg-warning" id="mlpProgressBar" style="width: 0%"></div>
+        </div>
+        <div class="small mt-1" id="mlpLast"></div>
+        <div class="small text-muted mt-1" id="mlpInfo"></div>
+        <div class="small" id="mlpHistory" style="max-height: 120px; overflow-y: auto;"></div>
+    </div>
+</div>
 
 <div id="toast-container" style="position: fixed; top: 20px; right: 20px; z-index: 9999;"></div>
 
@@ -23,6 +82,48 @@
         </div>
     </div>
 </div>
+<!-- Модальное окно поиска MAC -->
+<div class="modal fade" id="findMacModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-hat-wizard"></i> Поиск MAC в OLT (SNMP)</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="input-group mb-3">
+                    <input type="text" class="form-control" id="findMacInput" placeholder="XX:XX:XX:XX:XX:XX">
+                    <button class="btn btn-primary" id="findMacBtn">Найти</button>
+                </div>
+                <div id="findMacResult"></div>
+            </div>
+        </div>
+    </div>
+</div>
+<!-- Модальное окно трафика портов -->
+<div class="modal fade" id="trafficModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Трафик портов (SNMP)</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="d-flex gap-2 mb-2 flex-wrap">
+                    <select class="form-select" id="trafficPort" style="max-width: 260px;"></select>
+                    <select class="form-select" id="trafficHours" style="max-width: 150px;">
+                        <option value="3">3 часа</option>
+                        <option value="6" selected>6 часов</option>
+                        <option value="24">24 часа</option>
+                        <option value="72">3 суток</option>
+                    </select>
+                </div>
+                <canvas id="trafficChart" height="220"></canvas>
+                <div class="small text-muted mt-2" id="trafficInfo"></div>
+            </div>
+        </div>
+    </div>
+</div>
 <!-- Модальное окно для конфигурации -->
 <div class="modal fade" id="configModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-lg">
@@ -32,7 +133,7 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
-                <pre id="configOutput" style="background: #f8f9fa; padding: 10px; max-height: 400px; overflow: auto;"></pre>
+                <pre id="configOutput" style="background: var(--bg-secondary); color: var(--text-primary); padding: 10px; max-height: 400px; overflow: auto;"></pre>
             </div>
         </div>
     </div>
@@ -54,9 +155,12 @@
                 {% endif %}
             </span>
             <div onclick="event.stopPropagation()">
-                <a href="{{ url_for('main.signal_stats', device_id=device.id) }}?interface={{ intf }}" class="btn btn-sm btn-outline-secondary me-2" title="Статистика сигналов">
+                <a href="{{ url_for('main.signal_stats', device_id=device.id) }}?interface={{ intf }}" class="btn btn-sm btn-outline-secondary me-2" title="Статистика сигналов" onclick="openSignalStats(event, '{{ intf }}')">
                     <i class="fas fa-chart-bar"></i>
                 </a>
+                <button class="btn btn-sm btn-outline-primary traffic-btn" data-interface="{{ intf }}" title="Трафик порта (SNMP)">
+                    <i class="fas fa-chart-area"></i>
+                </button>
                 <button class="btn btn-sm btn-info scan-btn" data-interface="{{ intf }}" title="Опросить">
                     <i class="fas fa-sync"></i> Опросить
                 </button>
@@ -97,8 +201,8 @@
 
 <style>
 .toast-notification {
-    background: white;
-    border-left: 4px solid #28a745;
+    background: var(--bg-card);
+    border-left: 4px solid var(--success);
     border-radius: 4px;
     box-shadow: 0 4px 12px rgba(0,0,0,0.15);
     padding: 12px 20px;
@@ -108,13 +212,13 @@
     animation: slideInRight 0.3s ease-out;
     transition: opacity 0.3s ease-out;
 }
-.toast-notification.error { border-left-color: #dc3545; }
-.toast-notification.warning { border-left-color: #ffc107; }
+.toast-notification.error { border-left-color: var(--danger); }
+.toast-notification.warning { border-left-color: var(--warning); }
 @keyframes slideInRight {
     from { transform: translateX(100%); opacity: 0; }
     to { transform: translateX(0); opacity: 1; }
 }
-.card-header:hover { background-color: #f8f9fa; }
+.card-header:hover { background-color: var(--bg-hover); }
 .table-sm td, .table-sm th {
     padding: 0.15rem 0.4rem !important;
     font-size: 0.8rem;
@@ -131,28 +235,32 @@ td:last-child .btn {
     margin: 0 2px;
 }
 
-/* Подсветка строк ONU */
-tr.row-no-signal > td { background-color: {{ signal_nosignal_color }} !important; }
-tr.row-has-signal > td { background-color: {{ signal_has_color }} !important; }
+/* Подсветка строк ONU (цвета задаются theme.js через data-атрибуты body) */
+tr.row-no-signal > td { background-color: var(--row-bg-color, transparent) !important; }
+tr.row-has-signal > td { background-color: var(--row-bg-color, transparent) !important; }
+/* Зона сигнала: жёлтая полоса; зебра — когда вся таблица в зелёной зоне.
+   Правила идут ПОСЛЕ row-has/no-signal и перекрывают их при равной специфичности. */
+tr.row-sig-yellow > td { background-color: rgba(245, 158, 11, 0.18) !important; }
+tr.row-zebra-off > td { background-color: transparent !important; }
 
 /* Меню действий ONU */
 .action-menu-wrapper { position: relative; display: inline-block; }
 .action-menu-btn {
     background: transparent;
-    border: 1px solid #dee2e6;
+    border: 1px solid var(--border);
     border-radius: 4px;
     width: 30px;
     height: 30px;
     cursor: pointer;
     font-size: 16px;
-    color: #495057;
+    color: var(--text-secondary);
 }
-.action-menu-btn:hover { background: #f8f9fa; }
+.action-menu-btn:hover { background: var(--bg-hover); }
 .action-menu-dropdown {
     display: none;
     position: fixed;
-    background: white;
-    border: 1px solid #dee2e6;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
     border-radius: 6px;
     box-shadow: 0 4px 12px rgba(0,0,0,0.15);
     z-index: 10000;
@@ -165,20 +273,20 @@ tr.row-has-signal > td { background-color: {{ signal_has_color }} !important; }
     align-items: center;
     gap: 10px;
     padding: 8px 14px;
-    color: #212529;
+    color: var(--text-primary);
     text-decoration: none;
     font-size: 0.85rem;
     cursor: pointer;
 }
-.action-menu-dropdown a:hover { background: #f1f3f5; }
+.action-menu-dropdown a:hover { background: var(--bg-hover); }
 .action-menu-dropdown a i { width: 16px; text-align: center; }
 .action-menu-dropdown hr { margin: 4px 0; }
 </style>
 
 <script>
 let deviceId = {{ device.id }};
-const SIGNAL_HAS_COLOR = '{{ signal_has_color }}';
-const SIGNAL_NOSIGNAL_COLOR = '{{ signal_nosignal_color }}';
+const SIGNAL_HAS_COLOR = document.body.getAttribute('data-signal-has-color') || '{{ signal_has_color }}';
+const SIGNAL_NOSIGNAL_COLOR = document.body.getAttribute('data-signal-nosignal-color') || '{{ signal_nosignal_color }}';
 const cachedData = {{ cached_data|tojson }};
 
 function togglePort(intf) {
@@ -233,7 +341,7 @@ async function fetchOnuAddress(iface, onu, addressCellSelector) {
             if (cell) {
                 cell.textContent = data.address;
                 if (data.address === 'Удалён или не внесён') {
-                    cell.style.cssText = 'color: #dc3545; font-style: italic; font-weight: bold; background-color: #fff5f5;';
+                    cell.style.cssText = 'color: var(--danger); font-style: italic; font-weight: bold; background-color: var(--danger-glow);';
                 } else {
                     cell.style.cssText = '';
                 }
@@ -242,6 +350,22 @@ async function fetchOnuAddress(iface, onu, addressCellSelector) {
     } catch(e) {
         console.error('Address error:', e);
     }
+}
+
+// Подсветка строк по зонам сигнала; если все ONU в зелёной зоне — зебра (полутон через строку)
+function applySignalRowTint(tbody) {
+    if (!tbody) return;
+    const rows = Array.from(tbody.querySelectorAll('tr'));
+    const zoned = rows.filter(r => r.dataset.sigZone);
+    const allGreen = zoned.length > 0 && zoned.length === rows.length &&
+                     zoned.every(r => r.dataset.sigZone === 'green');
+    let gi = 0;
+    rows.forEach(r => {
+        if (!r.dataset.sigZone) return;
+        r.classList.remove('row-zebra-off');
+        if (allGreen && gi % 2 === 1) r.classList.add('row-zebra-off');
+        gi++;
+    });
 }
 
 async function fetchOnuInfo(iface, onu, signalCellId, tempCellId) {
@@ -272,13 +396,21 @@ async function fetchOnuInfo(iface, onu, signalCellId, tempCellId) {
                 }
             }
             if (row) {
-                if (hasSignal) {
-                    row.classList.remove('row-no-signal');
+                let zone = 'red';
+                if (hasSignal && !isNaN(parseFloat(data.signal))) {
+                    const v = parseFloat(data.signal);
+                    zone = (v > -25) ? 'green' : (v >= -30 ? 'yellow' : 'red');
+                }
+                row.dataset.sigZone = zone;
+                row.classList.remove('row-no-signal', 'row-has-signal', 'row-sig-yellow', 'row-zebra-off');
+                if (zone === 'green') {
                     row.classList.add('row-has-signal');
+                } else if (zone === 'yellow') {
+                    row.classList.add('row-has-signal', 'row-sig-yellow');
                 } else {
-                    row.classList.remove('row-has-signal');
                     row.classList.add('row-no-signal');
                 }
+                applySignalRowTint(row.closest('tbody'));
             }
             if (data.temperature !== null && data.temperature !== undefined) {
                 const tempCell = document.getElementById(tempCellId);
@@ -326,7 +458,7 @@ function renderCachedData(intf, data) {
             <td>${fullIf}</td>
             <td>${status}</td>
             <td>${formatMac(onuMac)}</td>
-            <td data-address-cell="${safeId}" style="${address === 'Удалён или не внесён' ? 'color: #dc3545; font-style: italic; font-weight: bold; background-color: #fff5f5;' : ''}">${address || '...'}</td>
+            <td data-address-cell="${safeId}" style="${address === 'Удалён или не внесён' ? 'color: var(--danger); font-style: italic; font-weight: bold; background-color: var(--danger-glow);' : ''}">${address || '...'}</td>
             <td id="${tempCellId}">...</td>
             <td id="${vlanCellId}">-</td>
             <td id="${lanCellId}">-</td>
@@ -460,7 +592,7 @@ async function handleVsolOnuAction(action, iface, onu, onuMac, macCellId, vlanCe
                     if (data.status === 'ok') {
                         showToast(data.message, 'success');
                         modal.hide();
-                        pollMonitorStatus(data.task_id, duration * 60);
+                        showMonitorLivePanel(data.task_id, { interface: iface, onu_id: onu });
                     } else showToast(data.message, 'error');
                 } catch(e) { showToast('Ошибка: ' + e.message, 'error'); }
                 this.disabled = false;
@@ -488,6 +620,227 @@ window.addEventListener('scroll', function() {
 
 
 // Обработчики сканирования
+// --- Живой мониторинг ONU: панель + опрос статуса ---
+let _monitorPoll = null;
+let _monitorTask = null;
+
+function showMonitorLivePanel(taskId, info) {
+    _monitorTask = { taskId: taskId, deviceId: deviceId, info: info || {} };
+    document.getElementById('mlpTarget').textContent = (info && info.interface ? info.interface : '') + ':' + (info && info.onu_id !== undefined ? info.onu_id : '');
+    const panel = document.getElementById('monitorLivePanel');
+    panel.style.display = 'block';
+    panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    const _lb = document.getElementById('mlpLast'); if (_lb) _lb.textContent = 'Ожидание первого снимка…';
+    const _lh = document.getElementById('mlpHistory'); if (_lh) _lh.innerHTML = '';
+    const _pb = document.getElementById('mlpProgressBar'); if (_pb) _pb.style.width = '0%';
+    setMonitorPanelStatus('running');
+    if (_monitorPoll) clearInterval(_monitorPoll);
+    monitorStatusTick();
+    _monitorPoll = setInterval(monitorStatusTick, 3000);
+}
+
+function setMonitorPanelStatus(status) {
+    const badge = document.getElementById('mlpStatus');
+    const stopBtn = document.getElementById('mlpStopBtn');
+    const resBtn = document.getElementById('mlpResultBtn');
+    badge.className = 'badge ' + (status === 'running' ? 'bg-warning text-dark' : status === 'done' ? 'bg-success' : 'bg-secondary');
+    badge.textContent = status === 'running' ? 'выполняется' : status === 'done' ? 'завершён' : 'остановлен';
+    stopBtn.style.display = status === 'running' ? '' : 'none';
+    resBtn.style.display = status === 'running' ? 'none' : '';
+    resBtn.onclick = function() { showMonitorResultTask(_monitorTask.taskId, _monitorTask.deviceId); };
+}
+
+async function monitorStatusTick() {
+    if (!_monitorTask) return;
+    try {
+        const resp = await fetch(`/api/device/${_monitorTask.deviceId}/monitor_status/${_monitorTask.taskId}`);
+        const data = await resp.json();
+        if (data.status === 'error') { stopMonitorPolling(); return; }
+        const total = (data.duration || 1) * 60;
+        const percent = Math.min(100, (data.elapsed / total) * 100);
+        const bar = document.getElementById('mlpProgressBar');
+        bar.style.width = percent + '%';
+        bar.className = 'progress-bar ' + (data.status === 'running' ? 'bg-warning' : 'bg-success');
+        document.getElementById('mlpInfo').textContent =
+            `прошло ${fmtDur(data.elapsed)} · осталось ${data.status === 'running' ? fmtDur(data.remaining) : '—'} · снимков: ${data.samples}` +
+            (data.last_update ? ` · обновлён ${data.last_update}` : '');
+        const lastDiv = document.getElementById('mlpLast');
+        const last = data.last;
+        if (last && !last.error) {
+            const sig = last.signal !== null && last.signal !== undefined ? last.signal : '—';
+            lastDiv.innerHTML = `<span>Сигнал: <span class="${sigClass(parseFloat(sig))}">${sig}</span></span>` +
+                `<span class="ms-3">Температура: ${last.temperature !== null && last.temperature !== undefined ? last.temperature : '—'}</span>` +
+                `<span class="ms-3">LAN: ${last.lan_state || '—'}</span>` +
+                `<span class="ms-3">MAC: ${Array.isArray(last.macs) ? last.macs.length : 0}</span>`;
+        } else if (last && last.error) {
+            lastDiv.innerHTML = `<span class="text-danger">Ошибка опроса: ${last.error}</span>`;
+        } else {
+            lastDiv.textContent = 'Ожидание первого снимка…';
+        }
+        const hist = document.getElementById('mlpHistory');
+        if (data.history && data.history.length) {
+            let rows = '<table class="table table-sm table-borderless mb-0"><tbody>';
+            data.history.slice().reverse().forEach(h => {
+                if (h.error) rows += `<tr><td>${h.t}</td><td colspan="4" class="text-danger">${h.error}</td></tr>`;
+                else rows += `<tr><td>${h.t}</td><td>сигнал ${h.signal !== null && h.signal !== undefined ? h.signal : '—'}</td>` +
+                    `<td>темп. ${h.temperature !== null && h.temperature !== undefined ? h.temperature : '—'}</td>` +
+                    `<td>LAN ${h.lan_state || '—'}</td><td>MAC ${h.macs}</td></tr>`;
+            });
+            hist.innerHTML = rows + '</tbody></table>';
+        } else hist.innerHTML = '';
+        if (data.status !== 'running') {
+            stopMonitorPolling();
+            if (data.status === 'done') showMonitorResultTask(_monitorTask.taskId, _monitorTask.deviceId);
+            const _mt = _monitorTask;
+            setTimeout(() => { if (_monitorTask === _mt) closeMonitorPanel(); }, 2000);
+        }
+    } catch (e) { console.error('monitor_status:', e); }
+}
+
+function stopMonitorPolling() {
+    if (_monitorPoll) { clearInterval(_monitorPoll); _monitorPoll = null; }
+}
+
+function closeMonitorPanel() {
+    stopMonitorPolling();
+    _monitorTask = null;
+    const panel = document.getElementById('monitorLivePanel');
+    if (panel) panel.style.display = 'none';
+}
+
+
+async function stopMonitorTask() {
+    if (!_monitorTask) return;
+    if (!confirm('Остановить мониторинг?')) return;
+    try {
+        const resp = await fetch(`/api/device/${_monitorTask.deviceId}/monitor_stop/${_monitorTask.taskId}`, { method: 'POST' });
+        const data = await resp.json();
+        showToast(data.message || (data.status === 'ok' ? 'Остановлено' : 'Ошибка'), data.status === 'ok' ? 'success' : 'error');
+        if (data.status === 'ok') monitorStatusTick();
+    } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
+}
+
+async function showMonitorResultTask(taskId, devId) {
+    try {
+        const resp = await fetch(`/api/device/${devId}/monitor_result/${taskId}`);
+        const data = await resp.json();
+        if (data.status === 'ok') showMonitorResult(data.result);
+        else showToast(data.message, 'error');
+    } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
+}
+
+function fmtDur(sec) {
+    sec = Math.max(0, Math.round(sec));
+    const m = Math.floor(sec / 60), s = sec % 60;
+    return m > 0 ? `${m} мин ${s} с` : `${s} с`;
+}
+
+function sigClass(v) {
+    if (isNaN(v)) return '';
+    return v > -25 ? 'signal-green' : v >= -30 ? 'signal-yellow' : 'signal-red';
+}
+
+function showMonitorResult(result) {
+    let html = '<h5>Результат мониторинга</h5>';
+    html += `<p>Интерфейс: ${result.interface}:${result.onu_id}</p>`;
+    html += `<p>Собрано снимков: ${result.duration}</p>`;
+    html += '<h6>Сводка:</h6><ul>';
+    if (result.summary) {
+        for (const [key, value] of Object.entries(result.summary)) html += `<li>${key}: ${value}</li>`;
+    }
+    html += '</ul>';
+    if (result.anomalies && result.anomalies.length > 0) {
+        html += '<h6 class="text-danger">Аномалии:</h6><ul>';
+        result.anomalies.forEach(a => html += `<li class="text-danger">${a}</li>`);
+        html += '</ul>';
+    } else {
+        html += '<p class="text-success">Аномалий не обнаружено.</p>';
+    }
+    const resultModal = document.createElement('div');
+    resultModal.className = 'modal fade';
+    resultModal.innerHTML = `<div class="modal-dialog modal-lg"><div class="modal-content">
+        <div class="modal-header"><h5 class="modal-title">Отчёт мониторинга</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+        <div class="modal-body"><pre>${html}</pre></div>
+        <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button></div>
+    </div></div>`;
+    document.body.appendChild(resultModal);
+    resultModal.addEventListener('hidden.bs.modal', function () { this.remove(); });
+new bootstrap.Modal(resultModal).show();
+}
+
+// При загрузке страницы: подхватить запущенный мониторинг этого устройства
+(async function() {
+    try {
+        const resp = await fetch('/api/monitoring/tasks');
+        const data = await resp.json();
+        const running = (data.tasks || []).find(x => x.device_id === deviceId && x.status === 'running');
+        if (running) showMonitorLivePanel(running.task_id, { interface: running.interface, onu_id: running.onu_id });
+    } catch (e) { /* тихо */ }
+})();
+
+const BG_SCANS = {{ background_scans_enabled|default(true)|tojson }};
+
+// --- Живое обновление сигналов из истории (без опроса OLT) ---
+const AUTO_REFRESH = {{ ui_auto_refresh_enabled|default(true)|tojson }};
+const AUTO_REFRESH_SEC = Math.max(10, {{ ui_auto_refresh_interval|default(30) }});
+let _liveBusy = false;
+
+async function autoRefreshTick() {
+    if (_liveBusy || document.hidden) return;
+    _liveBusy = true;
+    try {
+        const resp = await fetch(`/api/device/${deviceId}/onu_live`);
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (data.status !== 'ok') return;
+        const onus = data.onus || {};
+        for (const key of Object.keys(onus)) {
+            const info = onus[key];
+            const ci = key.lastIndexOf(':');
+            const intf = key.slice(0, ci), onu = key.slice(ci + 1);
+            const safeId = `epon${intf.replace('/','_')}_${onu}`;
+            const sigCell = document.getElementById(`signal-${safeId}`);
+            const tempCell = document.getElementById(`temp-${safeId}`);
+            if (!sigCell && !tempCell) continue; // порт не раскрыт
+            if (tempCell && info.temperature !== null && info.temperature !== undefined) {
+                tempCell.textContent = info.temperature;
+            }
+            if (sigCell && info.signal_db !== null && info.signal_db !== undefined) {
+                const val = Number(info.signal_db);
+                sigCell.textContent = val.toFixed(2);
+                sigCell.classList.remove('signal-green', 'signal-yellow', 'signal-red');
+                if (val > -25) sigCell.classList.add('signal-green');
+                else if (val >= -30) sigCell.classList.add('signal-yellow');
+                else sigCell.classList.add('signal-red');
+            }
+        }
+        const ind = document.getElementById('liveRefreshInd');
+        if (ind) ind.textContent = 'живое обновление: ' + new Date().toLocaleTimeString();
+    } catch (e) {
+        console.error('autoRefresh:', e);
+    } finally {
+        _liveBusy = false;
+    }
+}
+if (AUTO_REFRESH) setInterval(autoRefreshTick, AUTO_REFRESH_SEC * 1000);
+
+// --- Ожидание фонового скана ---
+async function waitForScan(taskId) {
+    for (let i = 0; i < 600; i++) {
+        await new Promise(r => setTimeout(r, 1000));
+        try {
+            const resp = await fetch(`/api/device/${deviceId}/scan_status/${taskId}`);
+            if (!resp.ok) continue;
+            const st = await resp.json();
+            if (st.status === 'ok') return Object.assign({status: 'ok'}, st.result || {});
+            if (st.status === 'error') throw new Error(st.message || 'Ошибка скана');
+        } catch (e) {
+            if (e.message && e.message !== 'Failed to fetch') throw e;
+        }
+    }
+    throw new Error('Превышено время ожидания скана');
+}
+
 document.querySelectorAll('.scan-btn').forEach(btn => {
     btn.addEventListener('click', async function(e) {
         e.stopPropagation();
@@ -505,8 +858,17 @@ document.querySelectorAll('.scan-btn').forEach(btn => {
         tbody.innerHTML = '<tr><td colspan="7" class="text-center">Загрузка...</td></tr>';
         
         try {
-            const resp = await fetch(`/api/device/${deviceId}/scan_interface/${intf}`);
-            const data = await resp.json();
+            let data;
+            if (BG_SCANS) {
+                const startResp = await fetch(`/api/device/${deviceId}/scan_start/${intf}`, {method: 'POST'});
+                const startData = await startResp.json();
+                if (startData.status !== 'ok') throw new Error(startData.message || 'Не удалось запустить скан');
+                data = await waitForScan(startData.task_id);
+            } else {
+                const resp = await fetch(`/api/device/${deviceId}/scan_interface/${intf}`);
+                if (!resp.ok) { throw new Error(`HTTP ${resp.status}`); }
+                data = await resp.json();
+            }
             if (data.status !== 'ok') throw new Error(data.message);
             
             const badge = document.getElementById('badge-epon' + intf.replace('/', '_'));
@@ -578,7 +940,7 @@ function showSignalChart(history) {
             datasets: [{
                 label: 'Сигнал (dBm)',
                 data: signals,
-                borderColor: '#28a745',
+                borderColor: (window.cssVar ? (cssVar('--success', '#28a745')) : '#28a745'),
                 backgroundColor: 'rgba(40, 167, 69, 0.1)',
                 tension: 0.3,
                 fill: true
@@ -729,7 +1091,7 @@ function getTaskName(url) {
 
 const queueIndicator = document.createElement('div');
 queueIndicator.id = 'queue-indicator';
-queueIndicator.style.cssText = 'position:fixed;bottom:20px;right:20px;background:#28a745;color:white;padding:10px 20px;border-radius:5px;box-shadow:0 2px 10px rgba(0,0,0,0.2);z-index:10000;display:none;font-size:14px;';
+queueIndicator.style.cssText = 'position:fixed;bottom:20px;right:20px;background:var(--success);color:#fff;padding:10px 20px;border-radius:5px;box-shadow:0 2px 10px rgba(0,0,0,0.2);z-index:10000;display:none;font-size:14px;';
 document.body.appendChild(queueIndicator);
 
 function showQueueIndicator() {
@@ -755,5 +1117,160 @@ window.fetch = function(url, options = {}) {
 };
 
 
+</script>
+
+
+<!-- Модальное окно статистики сигналов -->
+<div class="modal fade" id="signalStatsModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="signalStatsModalTitle">Статистика сигналов</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="signalStatsModalBody">
+                <div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+function openSignalStats(ev, intf) {
+    ev.preventDefault();
+    ev.stopPropagation();
+    var body = document.getElementById('signalStatsModalBody');
+    var title = document.getElementById('signalStatsModalTitle');
+    title.textContent = 'Статистика сигналов: порт ' + intf;
+    body.innerHTML = '<div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div><p class="mt-2 text-muted">Загрузка...</p></div>';
+    var modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('signalStatsModal'));
+    modal.show();
+    var url = "{{ url_for('main.signal_stats', device_id=device.id) }}?interface=" + encodeURIComponent(intf) + "&modal=1";
+    fetch(url)
+        .then(function (r) { return r.text(); })
+        .then(function (html) {
+            body.innerHTML = html;
+            body.querySelectorAll('script').forEach(function (old) {
+                var s = document.createElement('script');
+                s.textContent = old.textContent;
+                old.parentNode.replaceChild(s, old);
+            });
+            if (window.applyRowContrast) { try { applyRowContrast(); } catch (e) {} }
+        })
+        .catch(function (err) {
+            body.innerHTML = '<div class="alert alert-danger m-3">Ошибка загрузки статистики: ' + err + '</div>';
+        });
+}
+
+// === Здоровье OLT (SNMP-опросчик) ===
+async function loadHealthBadge() {
+    try {
+        const resp = await fetch(`/api/device/${deviceId}/health`);
+        const data = await resp.json();
+        if (data.status !== 'ok') return;
+        const el = document.getElementById('oltHealthBadge');
+        if (!el) return;
+        const cpu = data.cpu.length ? data.cpu[data.cpu.length - 1].v : null;
+        const up = data.uptime.length ? data.uptime[data.uptime.length - 1].v : null;
+        const parts = [];
+        if (cpu !== null) parts.push('CPU ' + cpu + '%');
+        if (up) {
+            const dd = Math.floor(up / 86400), hh = Math.floor(up % 86400 / 3600);
+            parts.push(dd > 0 ? dd + ' д ' + hh + ' ч' : hh + ' ч');
+        }
+        el.textContent = parts.join(' · ');
+        el.style.background = (cpu !== null && cpu > 80) ? 'var(--danger)' : 'var(--bg-hover)';
+        el.style.color = (cpu !== null && cpu > 80) ? '#fff' : 'var(--text-primary)';
+    } catch (e) {}
+}
+
+// === Трафик портов (SNMP) ===
+let trafficData = null;
+let trafficChartInstance = null;
+
+async function loadTraffic(iface) {
+    try {
+        const hours = document.getElementById('trafficHours').value;
+        const resp = await fetch(`/api/device/${deviceId}/traffic?hours=${hours}`);
+        const data = await resp.json();
+        if (data.status !== 'ok') { showToast(data.message || 'Ошибка трафика', 'error'); return; }
+        trafficData = data.series;
+        const sel = document.getElementById('trafficPort');
+        const ports = Object.keys(trafficData).sort();
+        if (!ports.length) { showToast('Данных трафика пока нет', 'warning'); return; }
+        sel.innerHTML = ports.map(p => `<option value="${p}">${p}</option>`).join('');
+        const want = iface ? 'EPON' + iface : ports[0];
+        sel.value = trafficData[want] ? want : ports[0];
+        drawTraffic();
+    } catch (e) { showToast('Ошибка: ' + e, 'error'); }
+}
+
+function drawTraffic() {
+    const port = document.getElementById('trafficPort').value;
+    const pts = (trafficData && trafficData[port]) || [];
+    if (window.trafficChartInstance) window.trafficChartInstance.destroy();
+    const ctx = document.getElementById('trafficChart').getContext('2d');
+    window.trafficChartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: pts.map(p => p.t),
+            datasets: [
+                { label: 'Вход (Мбит/с)', data: pts.map(p => p.in), borderColor: '#0d6efd', backgroundColor: 'rgba(13,110,253,0.08)', tension: 0.3, fill: true },
+                { label: 'Исход (Мбит/с)', data: pts.map(p => p.out), borderColor: '#fd7e14', backgroundColor: 'rgba(253,126,20,0.08)', tension: 0.3, fill: true }
+            ]
+        },
+        options: { responsive: true, interaction: { mode: 'index', intersect: false },
+            scales: { y: { title: { display: true, text: 'Мбит/с' } } } }
+    });
+    const last = pts[pts.length - 1];
+    document.getElementById('trafficInfo').textContent = last
+        ? `${port}: вход ${last.in} Мбит/с · исход ${last.out} Мбит/с (точек: ${pts.length})`
+        : `${port}: нет данных`;
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    loadHealthBadge();
+    setInterval(loadHealthBadge, 60000);
+    document.querySelectorAll('.traffic-btn').forEach(b => {
+        b.addEventListener('click', function() {
+            new bootstrap.Modal(document.getElementById('trafficModal')).show();
+            loadTraffic(this.dataset.interface || '');
+        });
+    });
+    const tPort = document.getElementById('trafficPort');
+    const tHours = document.getElementById('trafficHours');
+    if (tPort) tPort.addEventListener('change', drawTraffic);
+    if (tHours) tHours.addEventListener('change', () => loadTraffic(''));
+});
+
+// === Поиск MAC (SNMP Q-BRIDGE) ===
+document.getElementById('findMacBtn').addEventListener('click', async function() {
+    const input = document.getElementById('findMacInput');
+    const result = document.getElementById('findMacResult');
+    const mac = input.value.trim();
+    if (!mac) { result.innerHTML = '<div class="alert alert-warning">Введите MAC-адрес</div>'; return; }
+    this.disabled = true;
+    this.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+    result.innerHTML = '<div class="text-muted">Поиск (SNMP-таблица)...</div>';
+    try {
+        const resp = await fetch(`/api/device/${deviceId}/find_mac`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mac: mac })
+        });
+        const data = await resp.json();
+        if (data.status === 'ok') {
+            const r = data.result;
+            result.innerHTML = `<div class="alert alert-success">
+                <div><strong>MAC:</strong> ${r.mac}</div>
+                <div><strong>Порт:</strong> ${r.port}</div>
+                <div class="small text-muted">источник: SNMP Q-BRIDGE</div></div>`;
+        } else {
+            result.innerHTML = `<div class="alert alert-danger">${data.message || 'MAC не найден'}</div>`;
+        }
+    } catch (e) {
+        result.innerHTML = `<div class="alert alert-danger">Ошибка: ${e}</div>`;
+    }
+    this.disabled = false;
+    this.innerHTML = 'Найти';
+});
 </script>
 {% endblock %}

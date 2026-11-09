@@ -10,3 +10,9 @@ __pycache__/
 config.py
 ghp_*
 *.bak
+
+# рабочие бэкапы правок (не в git)
+*.bak*
+*.mergebak.*
+# резервные копии и дампы БД
+backups/

@@ -59,6 +59,9 @@ class OLTConnection:
                 break
         ansi = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
         clean = ansi.sub('', output)
+        # --More-- стирается backspace'ами (\x08): без чистки терялись ONU на границе страниц
+        clean = re.sub(r'\x08+', '', clean)
+        clean = re.sub(r'--More--\s*', '', clean)
         lines = clean.splitlines()
         if lines and cmd in lines[0]:
             lines.pop(0)
@@ -185,8 +188,8 @@ class OLTConnection:
             print(f"[DELETE] ERROR: {e}", file=sys.stderr)
             return False, f"Ошибка удаления {full_if}: {e}"
 
-    def get_lan_state(self, interface, onu_id):
-        cmd = f"show epon interface EPON {interface}:{onu_id} onu port 1 state"
+    def get_lan_state(self, interface, onu_id, port=1):
+        cmd = f"show epon interface EPON {interface}:{onu_id} onu port {port} state"
         raw = self.send_command(cmd)
         match = re.search(r'Hardware state is (.+)', raw, re.IGNORECASE)
         if match:
@@ -203,6 +206,17 @@ class OLTConnection:
             return "No UNI ports"
         else:
             return "Link-Down"
+
+    def detect_lan_ports(self, interface, onu_id, max_ports=4):
+        """UNI-порты ONU, видимые OLT (BDCOM обычно отдаёт только порт 1)."""
+        ports = [1]
+        for port in range(2, max_ports + 1):
+            raw = self.send_command(f"show epon interface EPON {interface}:{onu_id} onu port {port} state")
+            if 'hardware state is' in raw.lower():
+                ports.append(port)
+            else:
+                break
+        return ports
 
     def get_onu_info(self, interface, onu_id):
         cmd = f"show epon interface epon {interface}:{onu_id} onu ctc optical-transceiver-diagnosis"
@@ -399,10 +413,10 @@ class OLTConnection:
                 statuses[f"{interface}:{onu_id}"] = "up"
         return statuses, macs
 
-    def get_port_statistics(self, interface, onu_id):
+    def get_port_statistics(self, interface, onu_id, port=1):
         """Получает статистику порта ONU."""
         full_if = f"EPON{interface}:{onu_id}"
-        cmd = f"show epon interface {full_if} onu port 1 statistics"
+        cmd = f"show epon interface {full_if} onu port {port} statistics"
         print(f"[TELNET] Getting port statistics: {cmd}", file=sys.stderr)
         try:
             raw = self.send_command(cmd)

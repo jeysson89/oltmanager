@@ -81,18 +81,261 @@
         </div>
     </div>
 
-        <h5 class="mt-4">Подсветка сигналов</h5>
+    <h5 class="mt-4">Скорость и отзывчивость</h5>
+    <div class="form-check mb-2">
+        <input type="checkbox" class="form-check-input" id="ui_auto_refresh_enabled" name="ui_auto_refresh_enabled" value="True" {% if ui_auto_refresh_enabled %}checked{% endif %}>
+        <label class="form-check-label" for="ui_auto_refresh_enabled">
+            Живое обновление таблиц ONU (сигналы и температуры из истории, без опроса OLT)
+        </label>
+    </div>
     <div class="row mb-3">
         <div class="col-md-3">
-            <label for="signal_has_color" class="form-label">Цвет ONU с сигналом</label>
-            <input type="color" class="form-control form-control-color" id="signal_has_color" name="signal_has_color" value="{{ signal_has_color or '#ffffff' }}">
+            <label for="ui_auto_refresh_interval" class="form-label">Интервал живого обновления (секунд)</label>
+            <input type="number" class="form-control" id="ui_auto_refresh_interval" name="ui_auto_refresh_interval" value="{{ ui_auto_refresh_interval or 30 }}" min="10" step="5">
         </div>
+    </div>
+    <div class="form-check mb-2">
+        <input type="checkbox" class="form-check-input" id="background_scans_enabled" name="background_scans_enabled" value="True" {% if background_scans_enabled %}checked{% endif %}>
+        <label class="form-check-label" for="background_scans_enabled">
+            Фоновые сканы портов (кнопка «Опросить» не блокирует интерфейс)
+        </label>
+    </div>
+    <div class="row mb-3">
         <div class="col-md-3">
-            <label for="signal_nosignal_color" class="form-label">Цвет ONU без сигнала</label>
-            <input type="color" class="form-control form-control-color" id="signal_nosignal_color" name="signal_nosignal_color" value="{{ signal_nosignal_color or '#f8d7da' }}">
+            <label for="history_retention_days" class="form-label">Хранить историю сигналов (дней)</label>
+            <input type="number" class="form-control" id="history_retention_days" name="history_retention_days" value="{{ history_retention_days or 180 }}" min="30" step="10">
+            <div class="form-text">Старые записи удаляются автоматически после ночного опроса.</div>
         </div>
     </div>
 
-    <button type="submit" class="btn btn-primary">Сохранить и перезапустить</button>
+    <!-- ====== НАСТРОЙКИ ЦВЕТОВ ====== -->
+    <h5 class="mt-4"><i class="fas fa-palette me-1"></i> Цвета интерфейса</h5>
+    <div class="form-text mb-3">
+        Цвета фона строк в таблицах результатов сканирования. Цвет текста подбирается автоматически (белый/чёрный)
+        для читаемости. Тёмная тема используется по умолчанию, светлая включается кнопкой ☀/🌙 в шапке.
+    </div>
+
+    <!-- Тёмная тема -->
+    <div class="card mb-3">
+        <div class="card-header">
+            <i class="fas fa-moon me-1"></i> Тёмная тема (по умолчанию)
+        </div>
+        <div class="card-body">
+            <div class="row mb-3">
+                <div class="col-md-4">
+                    <label for="dark_bg_color" class="form-label">Фон страницы</label>
+                    <div class="input-group">
+                        <input type="color" class="form-control form-control-color" id="dark_bg_color" name="dark_bg_color" value="{{ dark_bg_color or '#0f172a' }}">
+                        <input type="text" class="form-control color-hex" data-target="dark_bg_color" value="{{ dark_bg_color or '#0f172a' }}">
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <label for="dark_card_color" class="form-label">Фон карточек</label>
+                    <div class="input-group">
+                        <input type="color" class="form-control form-control-color" id="dark_card_color" name="dark_card_color" value="{{ dark_card_color or '#1e293b' }}">
+                        <input type="text" class="form-control color-hex" data-target="dark_card_color" value="{{ dark_card_color or '#1e293b' }}">
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <label for="dark_text_color" class="form-label">Основной текст</label>
+                    <div class="input-group">
+                        <input type="color" class="form-control form-control-color" id="dark_text_color" name="dark_text_color" value="{{ dark_text_color or '#f1f5f9' }}">
+                        <input type="text" class="form-control color-hex" data-target="dark_text_color" value="{{ dark_text_color or '#f1f5f9' }}">
+                    </div>
+                </div>
+            </div>
+            <div class="row mb-3">
+                <div class="col-md-4">
+                    <label for="dark_signal_has_color" class="form-label">Строка: ONU с сигналом</label>
+                    <div class="input-group">
+                        <input type="color" class="form-control form-control-color" id="dark_signal_has_color" name="dark_signal_has_color" value="{{ dark_signal_has_color or '#1a3a2a' }}">
+                        <input type="text" class="form-control color-hex" data-target="dark_signal_has_color" value="{{ dark_signal_has_color or '#1a3a2a' }}">
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <label for="dark_signal_nosignal_color" class="form-label">Строка: ONU без сигнала</label>
+                    <div class="input-group">
+                        <input type="color" class="form-control form-control-color" id="dark_signal_nosignal_color" name="dark_signal_nosignal_color" value="{{ dark_signal_nosignal_color or '#3a1a1a' }}">
+                        <input type="text" class="form-control color-hex" data-target="dark_signal_nosignal_color" value="{{ dark_signal_nosignal_color or '#3a1a1a' }}">
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <label for="dark_accent_color" class="form-label">Акцентный цвет</label>
+                    <div class="input-group">
+                        <input type="color" class="form-control form-control-color" id="dark_accent_color" name="dark_accent_color" value="{{ dark_accent_color or '#3b82f6' }}">
+                        <input type="text" class="form-control color-hex" data-target="dark_accent_color" value="{{ dark_accent_color or '#3b82f6' }}">
+                    </div>
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-md-4">
+                    <label for="dark_signal_green" class="form-label">Сигнал: отличный (&gt; -25 dBm)</label>
+                    <input type="color" class="form-control form-control-color" id="dark_signal_green" name="dark_signal_green" value="{{ dark_signal_green or '#10b981' }}">
+                </div>
+                <div class="col-md-4">
+                    <label for="dark_signal_yellow" class="form-label">Сигнал: средний</label>
+                    <input type="color" class="form-control form-control-color" id="dark_signal_yellow" name="dark_signal_yellow" value="{{ dark_signal_yellow or '#f59e0b' }}">
+                </div>
+                <div class="col-md-4">
+                    <label for="dark_signal_red" class="form-label">Сигнал: плохой</label>
+                    <input type="color" class="form-control form-control-color" id="dark_signal_red" name="dark_signal_red" value="{{ dark_signal_red or '#ef4444' }}">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Светлая тема -->
+    <div class="card mb-3">
+        <div class="card-header">
+            <i class="fas fa-sun me-1"></i> Светлая тема
+        </div>
+        <div class="card-body">
+            <div class="row mb-3">
+                <div class="col-md-4">
+                    <label for="light_bg_color" class="form-label">Фон страницы</label>
+                    <div class="input-group">
+                        <input type="color" class="form-control form-control-color" id="light_bg_color" name="light_bg_color" value="{{ light_bg_color or '#f1f5f9' }}">
+                        <input type="text" class="form-control color-hex" data-target="light_bg_color" value="{{ light_bg_color or '#f1f5f9' }}">
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <label for="light_card_color" class="form-label">Фон карточек</label>
+                    <div class="input-group">
+                        <input type="color" class="form-control form-control-color" id="light_card_color" name="light_card_color" value="{{ light_card_color or '#ffffff' }}">
+                        <input type="text" class="form-control color-hex" data-target="light_card_color" value="{{ light_card_color or '#ffffff' }}">
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <label for="light_text_color" class="form-label">Основной текст</label>
+                    <div class="input-group">
+                        <input type="color" class="form-control form-control-color" id="light_text_color" name="light_text_color" value="{{ light_text_color or '#1e293b' }}">
+                        <input type="text" class="form-control color-hex" data-target="light_text_color" value="{{ light_text_color or '#1e293b' }}">
+                    </div>
+                </div>
+            </div>
+            <div class="row mb-3">
+                <div class="col-md-4">
+                    <label for="light_signal_has_color" class="form-label">Строка: ONU с сигналом</label>
+                    <div class="input-group">
+                        <input type="color" class="form-control form-control-color" id="light_signal_has_color" name="light_signal_has_color" value="{{ light_signal_has_color or '#d1fae5' }}">
+                        <input type="text" class="form-control color-hex" data-target="light_signal_has_color" value="{{ light_signal_has_color or '#d1fae5' }}">
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <label for="light_signal_nosignal_color" class="form-label">Строка: ONU без сигнала</label>
+                    <div class="input-group">
+                        <input type="color" class="form-control form-control-color" id="light_signal_nosignal_color" name="light_signal_nosignal_color" value="{{ light_signal_nosignal_color or '#fee2e2' }}">
+                        <input type="text" class="form-control color-hex" data-target="light_signal_nosignal_color" value="{{ light_signal_nosignal_color or '#fee2e2' }}">
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <label for="light_accent_color" class="form-label">Акцентный цвет</label>
+                    <div class="input-group">
+                        <input type="color" class="form-control form-control-color" id="light_accent_color" name="light_accent_color" value="{{ light_accent_color or '#2563eb' }}">
+                        <input type="text" class="form-control color-hex" data-target="light_accent_color" value="{{ light_accent_color or '#2563eb' }}">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Общие цвета сигналов (совместимость со старыми настройками) -->
+    <div class="card mb-3">
+        <div class="card-header">
+            <i class="fas fa-signal me-1"></i> Цвета строк таблиц (общие)
+            <span class="badge bg-secondary ms-2">совместимость</span>
+        </div>
+        <div class="card-body">
+            <div class="form-text mb-3">
+                Эти цвета применяются, если не заданы отдельные цвета для тёмной/светлой темы.
+            </div>
+            <div class="row">
+                <div class="col-md-3">
+                    <label for="signal_has_color" class="form-label">Цвет ONU с сигналом</label>
+                    <input type="color" class="form-control form-control-color" id="signal_has_color" name="signal_has_color" value="{{ signal_has_color or '#d1fae5' }}">
+                </div>
+                <div class="col-md-3">
+                    <label for="signal_nosignal_color" class="form-label">Цвет ONU без сигнала</label>
+                    <input type="color" class="form-control form-control-color" id="signal_nosignal_color" name="signal_nosignal_color" value="{{ signal_nosignal_color or '#fee2e2' }}">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="d-flex gap-2">
+        <button type="submit" class="btn btn-primary">
+            <i class="fas fa-save me-1"></i> Сохранить и перезапустить
+        </button>
+        <button type="button" class="btn btn-outline-secondary" id="resetColorsBtn">
+            <i class="fas fa-undo me-1"></i> Сбросить цвета по умолчанию
+        </button>
+    </div>
 </form>
+
+<script>
+// Синхронизация color-picker <-> hex-поле
+document.querySelectorAll('.color-hex').forEach(function (input) {
+    input.addEventListener('input', function () {
+        const target = document.getElementById(this.dataset.target);
+        if (target && /^#[0-9a-fA-F]{6}$/.test(this.value)) {
+            target.value = this.value;
+        }
+    });
+});
+document.querySelectorAll('input[type="color"]').forEach(function (picker) {
+    picker.addEventListener('input', function () {
+        const hexField = document.querySelector('.color-hex[data-target="' + this.id + '"]');
+        if (hexField) hexField.value = this.value;
+    });
+});
+
+// Предпросмотр темы в реальном времени
+function previewTheme() {
+    const dark = document.getElementById('dark_bg_color').value;
+    const darkCard = document.getElementById('dark_card_color').value;
+    const darkText = document.getElementById('dark_text_color').value;
+    const darkAccent = document.getElementById('dark_accent_color').value;
+    const light = document.getElementById('light_bg_color').value;
+    const lightCard = document.getElementById('light_card_color').value;
+    const lightText = document.getElementById('light_text_color').value;
+    const lightAccent = document.getElementById('light_accent_color').value;
+
+    const isLight = document.body.classList.contains('light-theme');
+    const root = document.documentElement.style;
+    if (isLight) {
+        root.setProperty('--bg-primary', light);
+        root.setProperty('--bg-card', lightCard);
+        root.setProperty('--bg-secondary', lightCard);
+        root.setProperty('--text-primary', lightText);
+        root.setProperty('--accent', lightAccent);
+    } else {
+        root.setProperty('--bg-primary', dark);
+        root.setProperty('--bg-card', darkCard);
+        root.setProperty('--bg-secondary', darkCard);
+        root.setProperty('--text-primary', darkText);
+        root.setProperty('--accent', darkAccent);
+    }
+}
+document.querySelectorAll('input[type="color"]').forEach(function (picker) {
+    picker.addEventListener('input', previewTheme);
+});
+
+// Сброс цветов
+document.getElementById('resetColorsBtn').addEventListener('click', function () {
+    if (!confirm('Сбросить все цвета к значениям по умолчанию?')) return;
+    const defaults = {
+        dark_bg_color: '#0f172a', dark_card_color: '#1e293b', dark_text_color: '#f1f5f9',
+        dark_signal_has_color: '#1a3a2a', dark_signal_nosignal_color: '#3a1a1a', dark_accent_color: '#3b82f6',
+        dark_signal_green: '#10b981', dark_signal_yellow: '#f59e0b', dark_signal_red: '#ef4444',
+        light_bg_color: '#f1f5f9', light_card_color: '#ffffff', light_text_color: '#1e293b',
+        light_signal_has_color: '#d1fae5', light_signal_nosignal_color: '#fee2e2', light_accent_color: '#2563eb',
+        signal_has_color: '#d1fae5', signal_nosignal_color: '#fee2e2'
+    };
+    for (const [id, val] of Object.entries(defaults)) {
+        const el = document.getElementById(id);
+        if (el) el.value = val;
+    }
+    previewTheme();
+});
+</script>
 {% endblock %}

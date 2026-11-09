@@ -2,6 +2,7 @@ import threading
 import time
 import sys
 import json
+import re
 from datetime import datetime, timedelta
 from app import create_app
 from app.olt_handler import OLTConnection
@@ -56,6 +57,7 @@ class AutoPoller:
                     if self.last_poll_date != now.date():
                         print(f"[AUTO] Starting scheduled poll at {now.strftime('%H:%M')}", file=sys.stderr)
                         self._poll_all_devices_parallel()
+                        self._cleanup_history()
                         self.last_poll_date = now.date()
                         print(f"[AUTO] Scheduled poll completed", file=sys.stderr)
                 
@@ -90,25 +92,75 @@ class AutoPoller:
                     except Exception as e:
                         print(f"[AUTO] Error polling {device.name}: {e}", file=sys.stderr)
 
+    def _cleanup_history(self):
+        """Удаляет историю сигналов старше HISTORY_RETENTION_DAYS."""
+        from config import Config
+        from sqlalchemy import text
+        from app.models import db
+        days = int(getattr(Config, 'HISTORY_RETENTION_DAYS', 180))
+        try:
+            res = db.session.execute(
+                text("DELETE FROM onu_signal_history WHERE scanned_at < NOW() - INTERVAL :d DAY"),
+                {'d': days})
+            db.session.commit()
+            print(f"[AUTO] History cleanup: removed {res.rowcount} rows older than {days}d", file=sys.stderr)
+        except Exception as e:
+            db.session.rollback()
+            print(f"[AUTO] History cleanup error: {e}", file=sys.stderr)
+
     def _poll_device(self, device):
-        """Опрашивает все EPON-порты устройства (вызывается в отдельном потоке)."""
-        olt = OLTConnection(device.ip, device.username, device.password, device.enable_password)
-        
-        # Получаем список интерфейсов через SNMP
-        interfaces = olt.get_interfaces_snmp()
-        
-        if interfaces is None:
-            # Fallback на Telnet
-            if not olt.connect():
-                print(f"[AUTO] Cannot connect to {device.name}", file=sys.stderr)
+        """Опрашивает все порты устройства любого типа: EPON, VSOL, GPON."""
+        if device.device_type == 'vsol':
+            from app.vsol_handler import VSOLConnection
+            olt = VSOLConnection(device.ip, device.username, device.password, device.enable_password)
+        elif device.device_type == 'gpon':
+            from app.gpon_handler import GPONConnection
+            olt = GPONConnection(device.ip, device.username, device.password, device.enable_password)
+        else:
+            olt = OLTConnection(device.ip, device.username, device.password, device.enable_password)
+
+        try:
+            # Получаем список интерфейсов через SNMP
+            interfaces = olt.get_interfaces_snmp()
+
+            if interfaces is None:
+                # Fallback: подключаемся и берём список портов из таблицы ONU
+                if not olt.connect():
+                    print(f"[AUTO] Cannot connect to {device.name}", file=sys.stderr)
+                    return
+                try:
+                    if device.device_type == 'vsol':
+                        # 'show onu auth-info all' на части прошивок работает только в config-режиме
+                        olt.session.sendline('configure terminal')
+                        olt.session.expect(r'\(config\)#', timeout=10)
+                        raw = olt.send_command('show onu auth-info all')
+                        olt.session.sendline('exit')
+                        olt.session.expect('#', timeout=10)
+                        ifaces = set(re.findall(r'(EPON\d+/\d+):\d+', raw))
+                        interfaces = sorted({i.replace('EPON', '').lower() for i in ifaces})
+                    elif device.device_type == 'gpon':
+                        raw = olt.send_command('show gpon onu-information')
+                        ifaces = set(re.findall(r'(GPON\d+/\d+):\d+', raw, re.IGNORECASE))
+                        interfaces = sorted({i.upper().replace('GPON', '').lower() for i in ifaces})
+                    else:
+                        interfaces, _ = olt.get_interfaces_and_statuses_telnet()
+                except Exception as e:
+                    print(f"[AUTO] [{device.name}] Interface list error: {e}", file=sys.stderr)
+                    interfaces = None
+
+            if not interfaces:
+                print(f"[AUTO] [{device.name}] No interfaces found, skipping", file=sys.stderr)
                 return
-            interfaces, _ = olt.get_interfaces_and_statuses_telnet()
-        
-        for interface in interfaces:
-            print(f"[AUTO] [{device.name}] Polling {interface}", file=sys.stderr)
-            self._poll_interface(device, interface, olt)
-        
-        olt.disconnect()
+
+            for interface in interfaces:
+                print(f"[AUTO] [{device.name}] Polling {interface}", file=sys.stderr)
+                self._poll_interface(device, interface, olt)
+        finally:
+            # Гарантированно закрываем сессию (для VSOL это освобождает глобальный замок)
+            try:
+                olt.disconnect()
+            except Exception:
+                pass
 
     def _poll_interface(self, device, interface, olt):
         """Опрашивает один EPON-порт."""
@@ -117,8 +169,23 @@ class AutoPoller:
                 if not olt.connect():
                     return
             
-            onu_statuses, onu_macs = olt.get_onu_data_for_scan(interface)
-            
+            scan_data = olt.get_onu_data_for_scan(interface)
+
+            # Нормализация: EPON возвращает tuple, VSOL/GPON — dict
+            if isinstance(scan_data, dict) and 'onu_macs' in scan_data:
+                onu_statuses = scan_data.get('onu_statuses', {})
+                raw_macs = scan_data.get('onu_macs', {})
+            else:
+                onu_statuses, raw_macs = scan_data
+
+            # Приводим MAC к строке (VSOL/GPON возвращают словари)
+            onu_macs = {}
+            for _oid, _val in raw_macs.items():
+                if isinstance(_val, dict):
+                    onu_macs[_oid] = _val.get('mac') or _val.get('sn') or _val.get('loid') or ''
+                else:
+                    onu_macs[_oid] = _val or ''
+
             addresses = {}
             for onu_id, mac in onu_macs.items():
                 if mac:
@@ -153,9 +220,20 @@ class AutoPoller:
             cursor.close()
             conn.close()
             
+            # Для VSOL — один запрос на все ONU (opm-diag all)
+            all_info = None
+            if device.device_type == 'vsol':
+                try:
+                    all_info = olt.get_all_onu_info(interface)
+                except Exception as e:
+                    print(f"[AUTO] [{device.name}] get_all_onu_info error {interface}: {e}", file=sys.stderr)
+
             # Опрашиваем сигналы для каждого ONU (даже если сигнал недоступен)
             for onu_id in onu_macs:
-                info = olt.get_onu_info(interface, onu_id)
+                if all_info is not None:
+                    info = all_info.get(onu_id)
+                else:
+                    info = olt.get_onu_info(interface, onu_id)
                 signal = info.get('signal') if info else None
                 temperature = info.get('temperature') if info else None
                 conn = connect(host='localhost', user='oltuser', password='oltpassword', database='oltmanager')
@@ -163,11 +241,31 @@ class AutoPoller:
                 cursor.execute("""
                     INSERT INTO onu_signal_history (device_id, interface, onu_id, mac_onu, address, signal_db, temperature)
                     VALUES (%s, %s, %s, %s, %s, %s, %s)
-                """, (device.id, interface, onu_id, onu_macs.get(onu_id, ''), addresses.get(onu_id, ''), signal, temperature))
+                """, (device.id, interface, onu_id, onu_macs.get(onu_id, ''), addresses.get(onu_id, 'Не внесён'), signal, temperature))
                 conn.commit()
                 cursor.close()
                 conn.close()
             
+            # Удаляем ONU, которых больше нет на порту (удалены с OLT)
+            if onu_macs:
+                try:
+                    _conn = connect(host='localhost', user='oltuser', password='oltpassword', database='oltmanager')
+                    _cur = _conn.cursor()
+                    _ph = ', '.join(['%s'] * len(onu_macs))
+                    _cur.execute(
+                        "DELETE FROM onu_signal_history WHERE device_id = %s AND interface = %s "
+                        "AND onu_id NOT IN (" + _ph + ") AND scanned_at < NOW() - INTERVAL 30 DAY",
+                        [device.id, interface] + list(onu_macs.keys())
+                    )
+                    _removed = _cur.rowcount
+                    _conn.commit()
+                    _cur.close()
+                    _conn.close()
+                    if _removed:
+                        print(f"[AUTO] [{device.name}] {interface}: removed {_removed} deleted ONU(s)", file=sys.stderr)
+                except Exception as e:
+                    print(f"[AUTO] [{device.name}] ONU cleanup error {interface}: {e}", file=sys.stderr)
+
             print(f"[AUTO] [{device.name}] Completed {interface}", file=sys.stderr)
         except Exception as e:
             print(f"[AUTO] [{device.name}] Error polling {interface}: {e}", file=sys.stderr)
@@ -240,6 +338,7 @@ def monitor_onu_worker(app, task_id, device_id, interface, onu_id, duration, int
             conn_cls = OLTConnection
         
         collected_data = []
+        lan_ports = None  # видимые UNI-порты; определим на первом успешном снимке
         
         while time.time() < end_time:
             # Проверяем статус задачи (если остановлена – выходим)
@@ -250,6 +349,15 @@ def monitor_onu_worker(app, task_id, device_id, interface, onu_id, duration, int
             # Создаём новое подключение к OLT
             olt = conn_cls(device.ip, device.username, device.password, device.enable_password)
             if olt.connect():
+                # Однократно: сколько UNI-портов ONU видит OLT (BDCOM обычно только 1)
+                if lan_ports is None:
+                    if hasattr(olt, 'detect_lan_ports'):
+                        try:
+                            lan_ports = olt.detect_lan_ports(interface, onu_id) or [1]
+                        except Exception:
+                            lan_ports = [1]
+                    else:
+                        lan_ports = [1]
                 # Получаем статистику порта
                 stats = olt.get_port_statistics(interface, onu_id)
                 # Получаем информацию о сигнале
@@ -258,6 +366,16 @@ def monitor_onu_worker(app, task_id, device_id, interface, onu_id, duration, int
                 lan_state = olt.get_lan_state(interface, onu_id)
                 # Получаем MAC-таблицу
                 mac_data = olt.get_mac_table(f"EPON{interface}:{onu_id}")
+                # Дополнительные UNI-порты (если ONU отдаёт их OLT'у)
+                extra_ports = {}
+                for _p in (lan_ports or [1])[1:]:
+                    try:
+                        extra_ports[str(_p)] = {
+                            'lan_state': olt.get_lan_state(interface, onu_id, port=_p),
+                            'stats': olt.get_port_statistics(interface, onu_id, port=_p) or {},
+                        }
+                    except Exception as _e:
+                        print(f"[MONITOR] LAN{_p} ошибка: {_e}", file=sys.stderr)
                 
                 snapshot = {
                     'timestamp': time.time(),
@@ -266,7 +384,8 @@ def monitor_onu_worker(app, task_id, device_id, interface, onu_id, duration, int
                     'temperature': onu_info.get('temperature') if onu_info else None,
                     'lan_state': lan_state,
                     'macs': mac_data.get('macs', []) if mac_data else [],
-                    'vlan': mac_data.get('vlans', []) if mac_data else []
+                    'vlan': mac_data.get('vlans', []) if mac_data else [],
+                    'extra_ports': extra_ports
                 }
                 collected_data.append(snapshot)
                 # Сохраняем снимок в БД
@@ -280,107 +399,28 @@ def monitor_onu_worker(app, task_id, device_id, interface, onu_id, duration, int
             # Обновляем last_update
             update_monitor_task(task_id, last_update=datetime.utcnow())
             
-            time.sleep(interval * 60)
+            # Спим мелкими шагами, чтобы «Остановить» срабатывало быстро
+            slept = 0.0
+            target_sleep = interval * 60
+            while slept < target_sleep:
+                step = min(5.0, target_sleep - slept)
+                time.sleep(step)
+                slept += step
+                t = MonitorTask.query.filter_by(task_id=task_id).first()
+                if not t or t.status == 'interrupted':
+                    break
+            t = MonitorTask.query.filter_by(task_id=task_id).first()
+            if not t or t.status == 'interrupted':
+                break
         
         # Формируем отчёт
         result = analyze_onu_monitor_data(collected_data, interface, onu_id)
-        # Сохраняем результат
-        update_monitor_task(task_id, status='done', end_time=datetime.utcnow(), result=json.dumps(result))
-
-def analyze_onu_monitor_data(data, interface, onu_id):
-    """Анализирует собранные данные и формирует отчёт."""
-    report = {
-        'interface': interface,
-        'onu_id': onu_id,
-        'duration': len(data),
-        'anomalies': [],
-        'summary': {}
-    }
-    
-    if not data:
-        report['summary'] = {'error': 'Нет данных'}
-        return report
-    
-    first = data[0]
-    last = data[-1]
-    
-    # Проверка ошибок в статистике LAN-порта
-    error_fields = [
-        'In Bad Octets',
-        'In FCS Error Frames',
-        'In MAC Received Error Frames',
-        'Fragments Frames',
-        'Oversize Frames',
-        'Jabber Frames',
-        'Collisions Frames',
-        'Excessive Frames',
-        'Late Frames'
-    ]
-    lan_errors = {}
-    total_error_delta = 0
-    for field in error_fields:
-        if field in first['stats'] and field in last['stats']:
-            try:
-                diff = int(last['stats'][field]) - int(first['stats'][field])
-            except:
-                diff = 0
-            if diff > 0:
-                lan_errors[field] = diff
-                total_error_delta += diff
-    
-    # Проверка сигнала
-    if first.get('signal') is not None and last.get('signal') is not None:
-        try:
-            sig_diff = float(last['signal']) - float(first['signal'])
-            if sig_diff < -3:
-                report['anomalies'].append(f"Ухудшение сигнала: {first['signal']} -> {last['signal']}")
-            elif sig_diff > 3:
-                report['anomalies'].append(f"Улучшение сигнала: {first['signal']} -> {last['signal']}")
-        except:
-            pass
-    
-    # Проверка LAN-статуса
-    if first.get('lan_state') and last.get('lan_state'):
-        if first['lan_state'] != last['lan_state']:
-            report['anomalies'].append(f"Изменение LAN-статуса: {first['lan_state']} -> {last['lan_state']}")
-    
-    # Проверка MAC-адресов
-    if first.get('macs') and last.get('macs'):
-        if set(first['macs']) != set(last['macs']):
-            report['anomalies'].append(f"Изменение MAC-адресов: {first['macs']} -> {last['macs']}")
-    
-    # Добавляем информацию об ошибках LAN
-    if lan_errors:
-        # Добавляем аномалию
-        error_str = ', '.join([f"{k}: +{v}" for k, v in lan_errors.items()])
-        report['anomalies'].append(f"Обнаружены ошибки на LAN-порту: {error_str}")
-        # Добавляем в сводку
-        report['summary']['lan_errors'] = lan_errors
-        report['summary']['total_error_delta'] = total_error_delta
-    else:
-        report['summary']['lan_errors'] = 'Нет увеличения ошибок'
-        report['summary']['total_error_delta'] = 0
-    
-    # Общая сводка
-    rx_diff = int(last.get('stats', {}).get('In Good Octets', 0)) - int(first.get('stats', {}).get('In Good Octets', 0))
-    if rx_diff < 0:
-        rx_diff = 0
-        report['anomalies'].append("Сброс счётчика входящих октетов")
-    tx_diff = int(last.get('stats', {}).get('Out Octets', 0)) - int(first.get('stats', {}).get('Out Octets', 0))
-    if tx_diff < 0:
-        tx_diff = 0
-        report['anomalies'].append("Сброс счётчика исходящих октетов")
-    report['summary'].update({
-        'samples': len(data),
-        'first_signal': first.get('signal'),
-        'last_signal': last.get('signal'),
-        'first_lan': first.get('lan_state'),
-        'last_lan': last.get('lan_state'),
-        'total_rx_octets': rx_diff,
-        'total_tx_octets': tx_diff,
-    })
-    
-    return report
+        # Сохраняем результат; статус 'interrupted' (остановлен пользователем) не перезаписываем
+        t = MonitorTask.query.filter_by(task_id=task_id).first()
+        if t and t.status == 'interrupted':
+            update_monitor_task(task_id, end_time=datetime.utcnow(), result=json.dumps(result))
+        else:
+            update_monitor_task(task_id, status='done', end_time=datetime.utcnow(), result=json.dumps(result))
 
 def analyze_onu_monitor_data(data, interface, onu_id):
     """Анализирует собранные данные и формирует отчёт."""
@@ -439,7 +479,36 @@ def analyze_onu_monitor_data(data, interface, onu_id):
         'total_rx_octets': last.get('stats', {}).get('In Good Octets', 0) - first.get('stats', {}).get('In Good Octets', 0),
         'total_tx_octets': last.get('stats', {}).get('Out Octets', 0) - first.get('stats', {}).get('Out Octets', 0),
     }
-    
+
+    # Дополнительные LAN-порты (если ONU отдаёт больше одного UNI)
+    def _num(v):
+        try:
+            return int(str(v).replace(',', ''))
+        except Exception:
+            return None
+
+    fe = first.get('extra_ports') or {}
+    le = last.get('extra_ports') or {}
+    for p, first_port in fe.items():
+        last_port = le.get(p) or {}
+        flan = first_port.get('lan_state')
+        llan = last_port.get('lan_state')
+        s1 = first_port.get('stats') or {}
+        s2 = last_port.get('stats') or {}
+        for key in ['In Bad Octets', 'In FCS Error Frames', 'Collisions Frames', 'Excessive Frames', 'Late Frames']:
+            a, b = _num(s1.get(key)), _num(s2.get(key))
+            if a is not None and b is not None and b - a > 0:
+                report['anomalies'].append(f"LAN{p}: Увеличение {key}: +{b - a}")
+        if flan and llan and flan != llan:
+            report['anomalies'].append(f"LAN{p}: Изменение LAN-статуса: {flan} -> {llan}")
+        if s1 or s2:
+            rx, rx0 = _num(s2.get('In Good Octets')), _num(s1.get('In Good Octets'))
+            tx, tx0 = _num(s2.get('Out Octets')), _num(s1.get('Out Octets'))
+            report['summary'][f'LAN{p}'] = (
+                f"{flan or '?'} -> {llan or '?'}; "
+                f"RX октетов: {'?' if None in (rx, rx0) else rx - rx0}; "
+                f"TX октетов: {'?' if None in (tx, tx0) else tx - tx0}")
+
     return report
 
 # Глобальный словарь для статусов устройств

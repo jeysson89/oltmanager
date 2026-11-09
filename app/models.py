@@ -42,7 +42,7 @@ class MonitorTask(db.Model):
     onu_id = db.Column(db.String(10), nullable=False)
     duration = db.Column(db.Integer, nullable=False)  # минуты
     interval = db.Column(db.Integer, nullable=False)  # минуты
-    status = db.Column(db.String(10), nullable=False, default='running')  # running/done/interrupted
+    status = db.Column(db.String(20), nullable=False, default='running')  # running/done/interrupted
     start_time = db.Column(db.DateTime, default=datetime.utcnow)
     end_time = db.Column(db.DateTime, nullable=True)
     result = db.Column(db.Text, nullable=True)  # JSON с результатом
@@ -59,3 +59,44 @@ class LoginHistory(db.Model):
     username = db.Column(db.String(64), nullable=False)
     ip_address = db.Column(db.String(45), nullable=False)
     timestamp = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+
+class DeviceHealth(db.Model):
+    __tablename__ = 'device_health'
+    id = db.Column(db.Integer, primary_key=True)
+    device_id = db.Column(db.Integer, db.ForeignKey('device.id'), nullable=False)
+    cpu = db.Column(db.SmallInteger, nullable=True)
+    uptime_s = db.Column(db.BigInteger, nullable=True)
+    ts = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class PortTraffic(db.Model):
+    __tablename__ = 'port_traffic'
+    id = db.Column(db.Integer, primary_key=True)
+    device_id = db.Column(db.Integer, db.ForeignKey('device.id'), nullable=False)
+    ifname = db.Column(db.String(40), nullable=False)
+    in_octets = db.Column(db.BigInteger, nullable=True)
+    out_octets = db.Column(db.BigInteger, nullable=True)
+    in_bps = db.Column(db.BigInteger, default=0)
+    out_bps = db.Column(db.BigInteger, default=0)
+    ts = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class OnuStatusLog(db.Model):
+    __tablename__ = 'onu_status_log'
+    id = db.Column(db.Integer, primary_key=True)
+    device_id = db.Column(db.Integer, db.ForeignKey('device.id'), nullable=False)
+    iface = db.Column(db.String(20), nullable=False)
+    onu_id = db.Column(db.String(10), nullable=False)
+    online = db.Column(db.SmallInteger, nullable=False)
+    ts = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class OnuRxHistory(db.Model):
+    __tablename__ = 'onu_rx_history'
+    id = db.Column(db.Integer, primary_key=True)
+    device_id = db.Column(db.Integer, db.ForeignKey('device.id'), nullable=False)
+    iface = db.Column(db.String(20), nullable=False)
+    onu_id = db.Column(db.String(10), nullable=False)
+    rx_db = db.Column(db.Numeric(6, 2), nullable=True)
+    ts = db.Column(db.DateTime, default=datetime.utcnow)

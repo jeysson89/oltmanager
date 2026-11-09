@@ -60,6 +60,10 @@ class GPONConnection:
                 break
         ansi = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
         clean = ansi.sub('', output)
+        # --More-- на GP3600 стирается backspace'ами (\x08), которые приклеиваются
+        # к первой строке новой страницы: парсер терял GPON0/1:10 и GPON0/1:21.
+        clean = re.sub(r'\x08+', '', clean)
+        clean = re.sub(r'--More--\s*', '', clean)
         lines = clean.splitlines()
         if lines and cmd in lines[0]:
             lines.pop(0)
@@ -119,7 +123,7 @@ class GPONConnection:
                 continue
             
             # Ищем строки со статусом (active/down)
-            status_match = re.match(r'(active|down|inactive)\s+(\S+)\s+(\S+)', line, re.IGNORECASE)
+            status_match = re.match(r'(active|down|inactive|off-line|offline)\s+(\S+)\s+(\S+)', line, re.IGNORECASE)
             if status_match:
                 # Предыдущая строка была ONU
                 if onus:
@@ -153,10 +157,10 @@ class GPONConnection:
         
         return result if result else None
 
-    def get_port_statistics(self, interface, onu_id):
+    def get_port_statistics(self, interface, onu_id, port=1):
         """Получает статистику порта ONU для GPON."""
         full_if = f"GPON{interface}:{onu_id}"
-        cmd = f"show gpon interface {full_if} onu port 1 statistics"
+        cmd = f"show gpon interface {full_if} onu port {port} statistics"
         print(f"[GPON] Getting port statistics: {cmd}", file=sys.stderr)
         try:
             raw = self.send_command(cmd)
@@ -192,8 +196,8 @@ class GPONConnection:
                 macs.append(mac_match.group(1))
         return {'macs': macs, 'vlan': vlan}
 
-    def get_lan_state(self, interface, onu_id):
-        cmd = f"show gpon interface GPON {interface}:{onu_id} onu port 1 state"
+    def get_lan_state(self, interface, onu_id, port=1):
+        cmd = f"show gpon interface GPON {interface}:{onu_id} onu port {port} state"
         raw = self.send_command(cmd)
         # Ищем "down" или "up" в выводе
         match = re.search(r'uni-port \d+\s+(down|up)', raw, re.IGNORECASE)
@@ -207,6 +211,17 @@ class GPONConnection:
             return "No UNI ports"
         else:
             return "Link-Down"
+
+    def detect_lan_ports(self, interface, onu_id, max_ports=4):
+        """UNI-порты ONU, видимые OLT (BDCOM обычно отдаёт только порт 1)."""
+        ports = [1]
+        for port in range(2, max_ports + 1):
+            raw = self.send_command(f"show gpon interface GPON {interface}:{onu_id} onu port {port} state")
+            if 'uni-port' in raw.lower():
+                ports.append(port)
+            else:
+                break
+        return ports
 
     def get_running_config(self, interface, onu_id):
         """Получает running-config для конкретного GPON ONU."""
@@ -295,6 +310,63 @@ class GPONConnection:
             return True, f"ONU {full_if} успешно удалён"
         except Exception as e:
             return False, f"Ошибка: {e}"
+
+    def clear_mac_table(self, interface, onu_id):
+        """Очищает динамические MAC-записи ONU (EXEC-команда, config не нужен).
+
+        Проверено на BDCOM GPON (GPON-SERV): активные клиенты переучиваются
+        за секунды, неактивные записи исчезают до возобновления трафика.
+        """
+        full_if = f"gpon{interface}:{onu_id}"
+        try:
+            cmd = f"clear mac address-table dynamic interface GPON {interface}:{onu_id}"
+            print(f"[GPON] Clearing MAC table: {cmd}", file=sys.stderr)
+            self.session.sendline(cmd)
+            idx = self.session.expect(['#', pexpect.TIMEOUT], timeout=15)
+            if idx == 1:
+                return False, f"Таймаут при очистке MAC {full_if}"
+            out = self.session.before or ''
+            if 'Unknown command' in out or 'Invalid' in out or 'Incomplete' in out:
+                return False, f"Команда не поддерживается: {out.strip()[:200]}"
+            return True, f"MAC-таблица ONU {full_if} очищена"
+        except Exception as e:
+            print(f"[GPON] Clear MAC error: {e}", file=sys.stderr)
+            return False, f"Ошибка очистки MAC: {e}"
+
+    def find_mac(self, mac):
+        """Ищет MAC-адрес в таблице коммутации OLT (GPON).
+
+        Формат результата идентичен EPON-версии: {vlan, mac, interface,
+        onu_id, port} - фронтенд использует interface/onu_id для кнопок
+        действий (MAC/LAN/1G/Reboot/Blacklist/Clear MAC).
+        """
+        # Нормализуем MAC в формат xxxx.xxxx.xxxx
+        clean = re.sub(r'[^0-9a-fA-F]', '', mac).lower()
+        if len(clean) != 12:
+            return None, "Неверный формат MAC (нужно 12 hex-символов)"
+        formatted = f"{clean[0:4]}.{clean[4:8]}.{clean[8:12]}"
+
+        cmd = f'show mac address-table {formatted}'
+        print(f"[GPON] Find MAC: {cmd}", file=sys.stderr)
+        try:
+            raw = self.send_command(cmd)
+            # Строка вида: 389  b095.755a.c275  DYNAMIC  gpon0/5:13-1
+            for line in raw.splitlines():
+                match = re.search(
+                    r'(\d+)\s+([0-9a-fA-F]{4}\.[0-9a-fA-F]{4}\.[0-9a-fA-F]{4})\s+\S+\s+gpon(\d+/\d+):(\d+)',
+                    line, re.IGNORECASE)
+                if match:
+                    return {
+                        'vlan': match.group(1),
+                        'mac': match.group(2),
+                        'interface': match.group(3),
+                        'onu_id': match.group(4),
+                        'port': f"gpon{match.group(3)}:{match.group(4)}"
+                    }, None
+            return None, "MAC не найден в таблице коммутации"
+        except Exception as e:
+            print(f"[GPON] Find MAC error: {e}", file=sys.stderr)
+            return None, f"Ошибка: {e}"
 
     def set_1g_sla(self, interface, onu_id):
         full_if = f"gpon{interface}:{onu_id}"

@@ -16,28 +16,51 @@ class VSOLConnection:
         self.enable_password = enable_password
         self.session = None
 
-    def connect(self):
+    def connect(self, retry_delay=15):
         global _vsol_lock
         _vsol_lock.acquire()
-        try:
-            self.session = pexpect.spawn(f'/usr/bin/telnet {self.host}', timeout=15, encoding='utf-8')
-            # VSOL запрашивает Login: (с большой L)
-            idx = self.session.expect(['Login:', 'Username:', 'login:', '>', '#'], timeout=8)
-            if idx < 3:
-                self.session.sendline(self.username)
-                self.session.expect(['(?i)Password:', '(?i)password:'], timeout=10)
-                self.session.sendline(self.password)
-                idx = self.session.expect(['>', '#'], timeout=10)
-            if idx == 0:  # '>'
-                self.session.sendline('enable')
-                idx_enable = self.session.expect(['(?i)Password:', '(?i)password:', '#'], timeout=10)
-                if idx_enable < 2:
-                    self.session.sendline(self.enable_password)
-                    self.session.expect('#', timeout=10)
-            return True
-        except Exception as e:
-            print(f"VSOL Connection error: {e}", file=sys.stderr)
-            return False
+        # VSOL OLT блокирует частые повторные коннекты — после неудачи
+        # ждём retry_delay секунд и делаем одну повторную попытку
+        for attempt in (1, 2):
+            try:
+                if self.session is not None:
+                    try:
+                        self.session.close()
+                    except Exception:
+                        pass
+                self.session = pexpect.spawn(f'/usr/bin/telnet {self.host}', timeout=15, encoding='utf-8')
+                # VSOL запрашивает Login: (с большой L)
+                idx = self.session.expect(['Login:', 'Username:', 'login:', '>', '#'], timeout=8)
+                if idx < 3:
+                    self.session.sendline(self.username)
+                    self.session.expect(['(?i)Password:', '(?i)password:'], timeout=10)
+                    self.session.sendline(self.password)
+                    idx = self.session.expect(['>', '#'], timeout=10)
+                if idx == 0:  # '>'
+                    self.session.sendline('enable')
+                    idx_enable = self.session.expect(['(?i)Password:', '(?i)password:', '#'], timeout=10)
+                    if idx_enable < 2:
+                        self.session.sendline(self.enable_password)
+                        self.session.expect('#', timeout=10)
+                return True
+            except Exception as e:
+                if self.session is not None:
+                    try:
+                        self.session.close()
+                    except Exception:
+                        pass
+                if attempt == 1 and retry_delay > 0:
+                    print(f"VSOL Connection error (attempt {attempt}): {e}; retry in {retry_delay}s", file=sys.stderr)
+                    time.sleep(retry_delay)
+                    continue
+                # Замок был взят в начале connect — при ошибке обязаны отдать
+                try:
+                    _vsol_lock.release()
+                except Exception:
+                    pass
+                print(f"VSOL Connection error: {e}", file=sys.stderr)
+                return False
+        return False
 
     def disconnect(self):
         global _vsol_lock
@@ -48,7 +71,11 @@ class VSOLConnection:
         except:
             pass
         finally:
-            _vsol_lock.release()
+            if _vsol_lock.locked():
+                try:
+                    _vsol_lock.release()
+                except Exception:
+                    pass
 
     def send_command(self, cmd, timeout=60):
         print(f"[VSOL] Sending: {cmd}", file=sys.stderr)
@@ -104,6 +131,9 @@ class VSOLConnection:
         
         ansi = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
         clean = ansi.sub('', output)
+        # --More-- стирается backspace'ами (\x08): без чистки терялись ONU на границе страниц
+        clean = re.sub(r'\x08+', '', clean)
+        clean = re.sub(r'--More--\s*', '', clean)
         lines = clean.splitlines()
         if lines and cmd in lines[0]:
             lines.pop(0)

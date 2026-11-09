@@ -67,6 +67,7 @@
 </div>
 
 <!-- Список устройств (drag-and-drop) -->
+<div id="dashSummary" class="small mb-3" style="display:none; background: var(--bg-card); border: 1px solid var(--border); border-radius: 0.5rem; padding: 0.5rem 0.75rem; color: var(--text-primary);"></div>
 <div class="row g-3" id="devices-list">
     {% for device in devices %}
     <div class="col-xl-3 col-lg-4 col-md-6 col-sm-12" draggable="true" data-device-id="{{ device.id }}" data-order="{{ loop.index0 }}">
@@ -74,7 +75,7 @@
             <div class="card-body py-3 px-3">
                 <div class="d-flex justify-content-between align-items-start mb-2">
                     <div class="d-flex align-items-center">
-                        <span class="status-dot me-2" id="status-{{ device.id }}" style="width: 10px; height: 10px; border-radius: 50%; display: inline-block; background-color: gray;"></span>
+                        <span class="status-dot me-2" id="status-{{ device.id }}" style="width: 10px; height: 10px; border-radius: 50%; display: inline-block; background-color: var(--text-muted);"></span>
                         <h5 class="card-title mb-0 text-truncate">{{ device.name }}</h5>
                     </div>
                     <span class="badge {% if device.device_type == 'gpon' %}bg-danger{% elif device.device_type == 'vsol' %}bg-info{% else %}bg-primary{% endif %}">
@@ -84,6 +85,7 @@
                 <p class="text-muted small mb-2">
                     <i class="fas fa-network-wired me-1"></i> {{ device.ip }}
                 </p>
+                <div class="small mb-1" id="dash-{{ device.id }}"></div>
                 {% if device.description %}
                 <p class="text-muted small mb-2">{{ device.description }}</p>
                 {% endif %}
@@ -234,7 +236,7 @@
                     const status = statuses[deviceId].status;
                     const dot = document.getElementById('status-' + deviceId);
                     if (dot) {
-                        dot.style.backgroundColor = status === 'up' ? '#28a745' : '#dc3545';
+                        dot.style.backgroundColor = status === 'up' ? (cssVar('--success', '#28a745')) : (cssVar('--danger', '#dc3545'));
                     }
                     // Блокируем кнопку "Открыть"
                     const openBtn = document.querySelector(`a[href*="/device/${deviceId}"]`);
@@ -274,5 +276,52 @@
           .then(data => console.log('Порядок сохранён:', data))
           .catch(error => console.error('Ошибка сохранения:', error));
     }
+
+    // === SNMP-дашборд: здоровье и ONU по устройствам ===
+    function fetchDashboard() {
+        fetch('/api/dashboard')
+            .then(r => r.json())
+            .then(data => {
+                if (data.status !== 'ok') return;
+                let totOnline = 0, totOffline = 0, totRx = 0, devs = 0;
+                for (const did in data.devices) {
+                    const el = document.getElementById('dash-' + did);
+                    const d = data.devices[did];
+                    const parts = [];
+                    if (d.cpu !== null && d.cpu !== undefined) parts.push('CPU ' + d.cpu + '%');
+                    if (d.uptime_s) {
+                        const dd = Math.floor(d.uptime_s / 86400), hh = Math.floor(d.uptime_s % 86400 / 3600);
+                        parts.push(dd > 0 ? dd + ' д' : hh + ' ч');
+                    }
+                    const o = data.onus[did];
+                    if (o && o.total) {
+                        const hasOnl = typeof o.online === 'number';
+                        let s = 'Зарег: <strong>' + o.total + '</strong>'
+                              + ' · Онлайн: <strong style="color: var(--success)">' + (hasOnl ? o.online : '—') + '</strong>';
+                        if (hasOnl && o.offline > 0) s += ' · <span style="color: var(--danger)">Офлайн: ' + o.offline + '</span>';
+                        parts.push(s);
+                    }
+                    if (d.rx_bad) parts.push('<span style="color: var(--danger)">RX&lt;-27: ' + d.rx_bad + '</span>');
+                    if (el) el.innerHTML = parts.join(' · ');
+                    if (o && typeof o.online === 'number') { totOnline += o.online; totOffline += (o.total - o.online); }
+                    if (d.rx_bad) totRx += d.rx_bad;
+                    devs++;
+                }
+                const sum = document.getElementById('dashSummary');
+                if (sum) {
+                    let s = '<i class="fas fa-heartbeat" style="color: var(--accent)"></i> OLT: ' + devs;
+                    if (totOnline + totOffline > 0) s += ' · ONU онлайн: <strong style="color: var(--success)">' + totOnline
+                        + '</strong> / offline: <span style="color: var(--danger)">' + totOffline + '</span>';
+                    s += ' · <span style="color: ' + (totRx ? 'var(--danger)' : 'inherit') + '">критичный RX: ' + totRx + '</span>';
+                    sum.innerHTML = s;
+                    sum.style.display = '';
+                }
+            })
+            .catch(e => console.error('dashboard:', e));
+    }
+    document.addEventListener('DOMContentLoaded', function() {
+        fetchDashboard();
+        setInterval(fetchDashboard, 60000);
+    });
 </script>
 {% endblock %}

@@ -1,0 +1,684 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+    <h2 class="mb-0"><i class="fas fa-satellite-dish me-2"></i>SNMP: {{ device.name }}
+        <span class="fs-6 text-muted">({{ device.ip }})</span></h2>
+    <div class="btn-group">
+        <button class="btn btn-primary" id="btnPoll" onclick="startStream()"><i class="fas fa-sync"></i> Опросить устройство</button>
+        <button class="btn btn-outline-primary" id="btnHistory" onclick="openHistory()"><i class="fas fa-history"></i> История</button>
+        <button class="btn btn-outline-primary" id="btnRefresh" onclick="loadScan(false)"><i class="fas fa-redo"></i> Обновить</button>
+        <a class="btn btn-outline-secondary" href="{{ url_for('main.snmp_scan') }}"><i class="fas fa-arrow-left"></i> К списку</a>
+    </div>
+</div>
+<div class="text-muted small mb-2" id="scanMeta"></div>
+<div id="progressWrap" style="display:none; margin-bottom: 8px;">
+    <div style="height: 7px; background: var(--bg-card, rgba(127,127,127,.15)); border: 1px solid var(--border); border-radius: 4px; overflow: hidden;">
+        <div id="progressBar" style="height: 100%; width: 0%; background: var(--success, #22c55e); transition: width .3s;"></div>
+    </div>
+    <div class="small text-muted mt-1" id="progressText"></div>
+</div>
+<div id="scanResult"></div>
+
+<style>
+tr.row-no-signal > td { background-color: var(--row-bg-color, transparent) !important; }
+tr.row-has-signal > td { background-color: var(--row-bg-color, transparent) !important; }
+tr.row-sig-yellow > td { background-color: rgba(245, 158, 11, 0.18) !important; }
+/* Построчная зебра полутона: нечётные строки приглушены на 55% */
+tr.row-zebra-dim > td { background-color: color-mix(in srgb, var(--row-bg-color, transparent) 55%, transparent) !important; }
+/* Разделители-группы портов */
+tbody.grp-head > tr > th {
+    background: var(--bg-card); color: var(--text-primary);
+    border-bottom: 2px solid var(--border); cursor: pointer;
+    position: sticky; top: 0; z-index: 5;
+}
+tbody.grp-head .grp-title { font-size: 1.02rem; font-weight: 700; }
+tbody.grp-rows.collapsed { display: none; }
+.chev { transition: transform .15s; }
+.collapsed-chev { transform: rotate(-90deg); }
+/* Прогресс-бар: полоса бегает, пока неизвестно количество */
+#progressBar.indeterminate { width: 30% !important; animation: progSlide 1.1s linear infinite; }
+@keyframes progSlide { 0% { margin-left: -35%; } 100% { margin-left: 105%; } }
+/* Вспышка на новых строках */
+tr.row-new > td { animation: rowFlash 1.4s ease-out; }
+@keyframes rowFlash { 0% { background-color: rgba(245, 158, 11, 0.30) !important; } 100% { background-color: transparent !important; } }
+/* Offline-таймер */
+td.offline-cell { color: var(--danger); font-weight: 600; white-space: nowrap; }
+/* Мини-таблица: компактные строки */
+#scanResult table td { padding: .12rem .35rem; font-size: .82rem; }
+#scanResult table thead th { padding: .25rem .35rem; font-size: .8rem; }
+/* История: сетка спарклайнов */
+.hist-port-head { background: var(--bg-card); border: 1px solid var(--border); border-left: 3px solid var(--primary, #4f6ef7); border-radius: 4px; padding: 4px 10px; margin: 10px 0 6px; cursor: pointer; color: var(--text-primary); }
+.hist-port-body { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 8px; }
+.hist-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; color: var(--text-primary); }
+.hist-card .hc-top { display: flex; justify-content: space-between; gap: 6px; font-size: .85rem; }
+.hist-card .hc-addr { color: var(--text-muted, #888); font-size: .78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hist-card .hc-rx { font-size: .8rem; font-weight: 600; }
+#histGrid table tbody.hist-tbl-head > tr > th { background: var(--bg-card); color: var(--text-primary); border-bottom: 2px solid var(--border); cursor: pointer; position: sticky; top: 0; z-index: 5; }
+#histGrid .btn.active { background: var(--primary, #4f6ef7); border-color: var(--primary, #4f6ef7); color: #fff; }
+#histGrid table tbody.hist-tbl-head > tr > th { background: var(--bg-card); color: var(--text-primary); border-bottom: 2px solid var(--border); cursor: pointer; position: sticky; top: 0; z-index: 5; }
+#histGrid .btn.active { background: var(--primary, #4f6ef7); border-color: var(--primary, #4f6ef7); color: #fff; }
+.hist-card .hc-addr2 { color: var(--text-muted, #888); font-size: .78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hc-delta { font-size: .78rem; font-weight: 700; }
+.hc-dates { display: flex; justify-content: space-between; font-size: .68rem; color: var(--text-muted, #888); }
+.hc-dates-inl { display: inline-flex; font-size: .68rem; color: var(--text-muted, #888); vertical-align: middle; }
+body:not(.light-theme) .btn-close { filter: invert(1); }
+</style>
+
+<div class="modal fade" id="historyModal" tabindex="-1">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content" style="background: var(--bg-card); color: var(--text-primary);">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="fas fa-history me-2"></i>История опросов — {{ device.name }}</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="text-muted small mb-1">Сигнал RX каждой ONU за последний месяц (telnet-сканы + SNMP). Клик по порту — свернуть/развернуть. На графиках время идёт слева направо: слева — старые замеры, справа — свежие.</div>
+        <div class="d-flex gap-2 align-items-center mb-2 flex-wrap">
+            <div class="btn-group btn-group-sm" role="group">
+                <button class="btn btn-outline-secondary" id="hbtnGrid" onclick="setHistView('grid')"><i class="fas fa-th"></i> Плитка</button>
+                <button class="btn btn-outline-secondary" id="hbtnList" onclick="setHistView('list')"><i class="fas fa-list"></i> Список</button>
+            </div>
+            <input id="histFilter" class="form-control form-control-sm" style="max-width: 230px;" placeholder="Фильтр: интерфейс / адрес" oninput="histRerender()">
+            <div class="form-check mb-0">
+                <input class="form-check-input" type="checkbox" id="histChangeTop" onchange="histRerender()">
+                <label class="form-check-label small" for="histChangeTop">Сверху — изменения сигнала</label>
+            </div>
+        </div>
+        <div id="histGrid"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" onclick="closeHistoryAndPoll()"><i class="fas fa-sync"></i> Опросить устройство</button>
+        <button class="btn btn-outline-secondary" data-bs-dismiss="modal">Закрыть</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let deviceId = {{ device.id }};
+let rowsMap = new Map();      // iface -> данные
+let rowEls = new Map();       // iface -> tr
+let groupsMap = new Map();    // port -> {head, rows, chev, countEl}
+let collapsedSet = new Set();
+let totalExpected = 0;
+let streaming = false;
+let es = null;
+const LS_KEY = 'snmpCollapsed_' + deviceId;
+
+function portOf(iface) { const i = iface.indexOf(':'); return i < 0 ? iface : iface.slice(0, i); }
+function portKey(p) { return p.split('/').map(x => parseInt(x) || 9999); }
+function cmpPort(a, b) {
+    const ka = portKey(a), kb = portKey(b);
+    for (let i = 0; i < Math.max(ka.length, kb.length); i++) {
+        const d = (ka[i] || 0) - (kb[i] || 0);
+        if (d) return d;
+    }
+    return 0;
+}
+function cmpIface(a, b) {
+    const pa = portOf(a), pb = portOf(b);
+    if (pa !== pb) return cmpPort(pa, pb);
+    return (parseInt(a.split(':')[1]) || 0) - (parseInt(b.split(':')[1]) || 0);
+}
+function loadCollapsed() {
+    try { collapsedSet = new Set(JSON.parse(localStorage.getItem(LS_KEY) || '[]')); }
+    catch (e) { collapsedSet = new Set(); }
+}
+function saveCollapsed() {
+    try { localStorage.setItem(LS_KEY, JSON.stringify([...collapsedSet])); } catch (e) {}
+}
+
+function zoneOf(d) {
+    if (d.up === false) return 'red';
+    if (typeof d.rx === 'number') {
+        if (d.rx > -25) return 'green';
+        if (d.rx >= -30) return 'yellow';
+        return 'red';
+    }
+    return null;
+}
+
+function ensureTable() {
+    const box = document.getElementById('scanResult');
+    if (!box.querySelector('table')) {
+        box.innerHTML = `<div class="d-flex gap-2 mb-2">
+                <button class="btn btn-sm btn-outline-secondary" onclick="collapseAll(true)"><i class="fas fa-compress"></i> Свернуть все</button>
+                <button class="btn btn-sm btn-outline-secondary" onclick="collapseAll(false)"><i class="fas fa-expand"></i> Развернуть все</button>
+            </div>
+            <div class="table-responsive"><table class="table table-sm align-middle">
+                <thead><tr><th>Интерфейс</th><th>MAC</th><th>Адрес</th><th>Статус</th>
+                <th>TX (дБм)</th><th>RX (дБм)</th><th>Offline</th><th>История RX (месяц)</th></tr></thead>
+            </table></div>`;
+        rowsMap = new Map(); rowEls = new Map(); groupsMap = new Map();
+        loadCollapsed();
+    }
+    return box.querySelector('table');
+}
+
+function clearRows() {
+    const table = ensureTable();
+    table.querySelectorAll('tbody').forEach(t => t.remove());
+    rowsMap = new Map(); rowEls = new Map(); groupsMap = new Map();
+}
+
+function getGroup(port) {
+    let g = groupsMap.get(port);
+    if (g) return g;
+    const table = ensureTable();
+    const head = document.createElement('tbody');
+    head.className = 'grp-head';
+    head.innerHTML = `<tr onclick="toggleGroup('${port}')">
+        <th colspan="6"><i class="fas fa-chevron-down me-2 chev"></i><span class="grp-title">${port}</span>
+        <span class="grp-count text-muted small ms-2"></span></th></tr>`;
+    const rows = document.createElement('tbody');
+    rows.className = 'grp-rows';
+    rows.dataset.port = port;
+    let refNode = null;
+    for (const [p, gg] of groupsMap) { if (cmpPort(p, port) > 0) { refNode = gg.head; break; } }
+    table.insertBefore(head, refNode);
+    if (refNode) table.insertBefore(rows, refNode); else table.appendChild(rows);
+    g = { head, rows, chev: head.querySelector('.chev'), countEl: head.querySelector('.grp-count') };
+    groupsMap.set(port, g);
+    if (collapsedSet.has(port)) applyCollapse(port, true);
+    return g;
+}
+
+function applyCollapse(port, c) {
+    const g = groupsMap.get(port);
+    if (!g) return;
+    g.rows.style.display = c ? 'none' : '';
+    g.chev.classList.toggle('collapsed-chev', c);
+}
+
+function toggleGroup(port) {
+    const c = !collapsedSet.has(port);
+    if (c) collapsedSet.add(port); else collapsedSet.delete(port);
+    applyCollapse(port, c);
+    saveCollapsed();
+}
+
+function collapseAll(c) {
+    collapsedSet = c ? new Set(groupsMap.keys()) : new Set();
+    for (const p of groupsMap.keys()) applyCollapse(p, c);
+    saveCollapsed();
+}
+
+function upsertRow(iface, d, flash) {
+    const port = portOf(iface);
+    const g = getGroup(port);
+    let tr = rowEls.get(iface);
+    if (!tr) {
+        // позиция внутри группы: по номеру ONU
+        let before = null;
+        for (const k of rowEls.keys()) {
+            if (portOf(k) === port && cmpIface(k, iface) > 0) { before = rowEls.get(k); break; }
+        }
+        tr = document.createElement('tr');
+        tr.innerHTML = '<td class="fw-bold"></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td>';
+        if (flash) tr.classList.add('row-new');
+        g.rows.insertBefore(tr, before);
+        rowEls.set(iface, tr);
+    }
+    rowsMap.set(iface, Object.assign(rowsMap.get(iface) || {}, d));
+    const r = rowsMap.get(iface);
+    const td = tr.children;
+    td[0].textContent = iface;
+    td[1].textContent = r.mac || '—';
+    td[2].textContent = r.address || '—';
+    td[2].style.cssText = (r.address === 'Не внесён' || r.address === 'Удалён или не внесён')
+        ? 'color: var(--danger); font-style: italic; font-weight: bold;' : '';
+    td[3].innerHTML = (r.up === undefined || r.up === null) ? '…'
+        : (r.up ? '<span class="badge bg-success">Up</span>' : '<span class="badge bg-danger">Down</span>');
+    td[4].textContent = (r.up === false) ? '—' : ((typeof r.tx === 'number') ? r.tx.toFixed(1) : '…');
+    td[5].textContent = (r.up === false) ? '—' : ((typeof r.rx === 'number') ? r.rx.toFixed(1) : '…');
+    td[6].textContent = (r.up === false) ? (r.offline ? fmtDur(Date.now() / 1000 - r.offline) : '…')
+        : (r.up === true ? '—' : '');
+    td[6].className = (r.up === false) ? 'offline-cell' : '';
+    td[7].innerHTML = (typeof rxHist !== 'undefined' && rxHist[iface]) ? sparkSVG(rxHist[iface]) : '';
+    const z = zoneOf(r);
+    tr.classList.remove('row-has-signal', 'row-no-signal', 'row-sig-yellow');
+    if (z === 'green') tr.classList.add('row-has-signal');
+    else if (z === 'yellow') tr.classList.add('row-has-signal', 'row-sig-yellow');
+    else if (z === 'red') tr.classList.add('row-no-signal');
+    // счётчик группы
+    let total = g.rows.children.length, up = 0, down = 0;
+    for (const [k, rr] of rowsMap) {
+        if (portOf(k) !== port) continue;
+        if (rr.up === true) up++; else if (rr.up === false) down++;
+    }
+    g.countEl.textContent = `ONU: ${total}` + (up + down ? ` · Up: ${up} · Down: ${down}` : '');
+}
+
+function reZebra() {
+    for (const g of groupsMap.values()) {
+        [...g.rows.children].forEach((tr, i) => tr.classList.toggle('row-zebra-dim', i % 2 === 1));
+    }
+}
+
+function afterBatch() {
+    if (window.applyRowContrast) { try { applyRowContrast(); } catch (e) {} }
+    reZebra();
+}
+
+function setMeta(text) { document.getElementById('scanMeta').textContent = text; }
+
+function updateProgress(known, total) {
+    const pb = document.getElementById('progressBar');
+    const pt = document.getElementById('progressText');
+    pb.classList.remove('indeterminate');
+    const pct = total ? Math.min(100, Math.round(known / total * 100)) : 0;
+    pb.style.width = pct + '%';
+    pt.textContent = `Получено ${known} из ${total} ONU (${pct}%)`;
+}
+
+function fmtDur(s) {
+    s = Math.max(0, Math.floor(s));
+    const d = Math.floor(s / 86400); s -= d * 86400;
+    const h = Math.floor(s / 3600); s -= h * 3600;
+    const m = Math.floor(s / 60); s -= m * 60;
+    return (d ? d + 'д ' : '') + (h ? h + 'ч ' : '') + (m ? m + 'м ' : '') + s + 'с';
+}
+
+// тик таймеров offline раз в секунду
+setInterval(() => {
+    const now = Date.now() / 1000;
+    for (const [k, tr] of rowEls) {
+        const r = rowsMap.get(k);
+        if (!r || r.up !== false || !r.offline) continue;
+        const cell = tr.children[6];
+        if (cell) cell.textContent = fmtDur(now - r.offline);
+    }
+}, 1000);
+
+// ---------- История сигналов: спарклайны ----------
+var rxHist = {};
+
+function fdt(ts) {
+    return new Date(ts * 1000).toLocaleDateString('ru-RU', {day: '2-digit', month: '2-digit'});
+}
+
+function sparkSVG(points, w, h) {
+    w = w || 90; h = h || 22;
+    if (!points || points.length < 2) return '<span class="text-muted small">—</span>';
+    let pts = points;
+    if (pts.length > 60) {
+        const step = Math.ceil(pts.length / 60);
+        pts = pts.filter((p, i) => i % step === 0 || i === pts.length - 1);
+    }
+    const x0 = pts[0][0], x1 = pts[pts.length - 1][0];
+    const y0 = -30, y1 = -16;
+    const X = t => ((t - x0) / ((x1 - x0) || 1)) * (w - 6) + 3;
+    const Y = v => Math.max(2, Math.min(h - 2, h - 2 - ((v - y0) / (y1 - y0)) * (h - 4)));
+    const poly = pts.map(p => X(p[0]).toFixed(1) + ',' + Y(p[1]).toFixed(1)).join(' ');
+    const lv = pts[pts.length - 1][1];
+    const color = lv > -25 ? 'var(--success, #22c55e)'
+        : (lv >= -30 ? '#f59e0b' : 'var(--danger, #dc2626)');
+    const lx = X(pts[pts.length - 1][0]).toFixed(1), ly = Y(lv).toFixed(1);
+    const d0 = new Date(pts[0][0] * 1000).toLocaleDateString('ru-RU', {day: '2-digit', month: '2-digit'});
+    const d1 = new Date(pts[pts.length - 1][0] * 1000).toLocaleDateString('ru-RU', {day: '2-digit', month: '2-digit'});
+    return `<svg width="${w}" height="${h}" style="vertical-align:middle">` +
+        `<title>${d0} → ${d1} · слева — старые, справа — свежие</title>` +
+        `<polyline points="${poly}" fill="none" stroke="${color}" stroke-width="1.3" opacity="0.85"/>` +
+        `<circle cx="${lx}" cy="${ly}" r="2.2" fill="${color}"/></svg>`;
+}
+
+async function loadRxHist() {
+    try {
+        const resp = await fetch(`/api/snmp_scan_rxhist/${deviceId}`);
+        const data = await resp.json();
+        if (data.status !== 'ok') return;
+        rxHist = data.hist || {};
+        for (const [k, tr] of rowEls) {
+            const cell = tr.children[7];
+            if (cell && rxHist[k]) cell.innerHTML = sparkSVG(rxHist[k]);
+        }
+    } catch (e) {}
+}
+
+// ---------- История опросов: спарклайны всех ONU ----------
+let histModal = null;
+
+async function openHistory() {
+    const el = document.getElementById('historyModal');
+    if (!histModal) histModal = new bootstrap.Modal(el);
+    histModal.show();
+    document.getElementById('hbtnGrid').classList.toggle('active', histView === 'grid');
+    document.getElementById('hbtnList').classList.toggle('active', histView === 'list');
+    const grid = document.getElementById('histGrid');
+    grid.innerHTML = '<span class="text-muted">Загрузка истории сигналов...</span>';
+    let hist = {};
+    try {
+        const resp = await fetch(`/api/snmp_scan_rxhist/${deviceId}`);
+        const data = await resp.json();
+        if (data.status === 'ok') hist = data.hist || {};
+    } catch (e) {
+        grid.textContent = 'Ошибка: ' + e;
+        return;
+    }
+    // полный список ONU + адреса из кэша сканов
+    try {
+        const resp2 = await fetch(`/api/snmp_scan/${deviceId}`);
+        const d2 = await resp2.json();
+        if (d2.status === 'ok' && d2.data.onus) {
+            window._histAddr = {};
+            d2.data.onus.forEach(o => {
+                window._histAddr[o.iface] = o.address || '';
+                if (!hist[o.iface]) hist[o.iface] = [];
+            });
+        }
+    } catch (e) {}
+    renderHistGrid(hist);
+}
+
+let histView = 'grid';
+try { histView = localStorage.getItem('snmpHistView') || 'grid'; } catch (e) {}
+
+function setHistView(v) {
+    histView = v;
+    try { localStorage.setItem('snmpHistView', v); } catch (e) {}
+    document.getElementById('hbtnGrid').classList.toggle('active', v === 'grid');
+    document.getElementById('hbtnList').classList.toggle('active', v === 'list');
+    if (window._histData) renderHistGrid(window._histData);
+}
+
+function renderHistTable(hist) {
+    const grid = document.getElementById('histGrid');
+    const addr = window._histAddr || {};
+    const { flt, chTop } = histControls();
+    const keys = histFilterKeys(hist, addr, flt);
+    if (!keys.length) { grid.innerHTML = '<span class="text-muted">Ничего не найдено</span>'; return; }
+    if (chTop) {
+        keys.sort((a, b) => {
+            const da = deltaOf(hist, a), db = deltaOf(hist, b);
+            return (da === null ? 999 : da) - (db === null ? 999 : db);
+        });
+        let html = `<div class="table-responsive"><table class="table table-sm align-middle">
+            <thead><tr><th>Интерфейс</th><th>Адрес</th><th>Δ RX за месяц</th><th>RX сейчас</th><th>История</th></tr></thead><tbody>`;
+        for (const k of keys) {
+            const pts = hist[k];
+            const lv = pts.length ? pts[pts.length - 1][1] : null;
+            const lc = lv === null ? 'var(--text-muted, #888)'
+                : (lv > -25 ? 'var(--success, #22c55e)' : (lv >= -30 ? '#f59e0b' : 'var(--danger, #dc2626)'));
+            const dv = deltaOf(hist, k);
+            html += `<tr><td class="fw-bold">${k}</td>
+                <td style="max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${addr[k] || '—'}</td>
+                <td>${dv === null ? '—' : fmtDelta(dv)}</td>
+                <td style="color:${lc}; font-weight:600">${lv === null ? '—' : lv.toFixed(1) + ' дБм'}</td>
+                <td>${pts.length > 1 ? sparkSVG(pts, 200, 30) + ` <span class="hc-dates hc-dates-inl"><span>${fdt(pts[0][0])}</span><span class="ms-1">→</span><span class="ms-1">${fdt(pts[pts.length - 1][0])}</span></span>` : '<span class="text-muted small">нет данных</span>'}</td></tr>`;
+        }
+        grid.innerHTML = html + '</tbody></table></div>';
+        return;
+    }
+    const ports = new Map();
+    for (const k of keys) {
+        const p = k.split(':')[0];
+        if (!ports.has(p)) ports.set(p, []);
+        ports.get(p).push(k);
+    }
+    if (!ports.size) { grid.innerHTML = '<span class="text-muted">Ничего не найдено</span>'; return; }
+    let collapsed = new Set();
+    try { collapsed = new Set(JSON.parse(localStorage.getItem('snmpHistCollapsed_' + deviceId) || '[]')); } catch (e) {}
+    let html = `<div class="table-responsive"><table class="table table-sm align-middle">
+        <thead><tr><th>Интерфейс</th><th>Адрес</th><th>RX сейчас</th><th>История RX (месяц)</th></tr></thead>`;
+    for (const p of [...ports.keys()].sort(cmpPort)) {
+        const ks = ports.get(p).sort(cmpIface);
+        const isCol = collapsed.has(p);
+        html += `<tbody class="hist-tbl-head" onclick="toggleHistPort('${p}')"><tr>
+            <th colspan="4"><i class="fas fa-chevron-down me-2 chev ${isCol ? 'collapsed-chev' : ''}"></i><b>${p}</b>
+            <span class="text-muted small">(${ks.length} ONU)</span></th></tr></tbody>
+            <tbody class="hist-tbl-rows" data-port="${p}" style="${isCol ? 'display:none' : ''}">`;
+        for (const k of ks) {
+            const pts = hist[k];
+            const lv = pts.length ? pts[pts.length - 1][1] : null;
+            const lc = lv === null ? 'var(--text-muted, #888)'
+                : (lv > -25 ? 'var(--success, #22c55e)' : (lv >= -30 ? '#f59e0b' : 'var(--danger, #dc2626)'));
+            html += `<tr><td class="fw-bold">${k}</td>
+                <td style="max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${addr[k] || '—'}</td>
+                <td style="color:${lc}; font-weight:600">${lv === null ? '—' : lv.toFixed(1) + ' дБм'}</td>
+                <td>${pts.length > 1 ? sparkSVG(pts, 200, 30) + ` <span class="hc-dates hc-dates-inl"><span>${fdt(pts[0][0])}</span><span class="ms-1">→</span><span class="ms-1">${fdt(pts[pts.length - 1][0])}</span></span>` : '<span class="text-muted small">нет данных</span>'}</td></tr>`;
+        }
+        html += '</tbody>';
+    }
+    grid.innerHTML = html + '</table></div>';
+}
+
+function histRerender() { if (window._histData) renderHistGrid(window._histData); }
+
+function histControls() {
+    const fltEl = document.getElementById('histFilter');
+    const chEl = document.getElementById('histChangeTop');
+    return {
+        flt: fltEl ? fltEl.value.trim().toLowerCase() : '',
+        chTop: !!(chEl && chEl.checked)
+    };
+}
+
+function histFilterKeys(hist, addr, flt) {
+    let keys = Object.keys(hist);
+    if (flt) keys = keys.filter(k => k.toLowerCase().includes(flt) ||
+        (addr[k] || '').toLowerCase().includes(flt));
+    return keys;
+}
+
+function deltaOf(hist, k) {
+    const pts = hist[k];
+    return (pts && pts.length > 1) ? (pts[pts.length - 1][1] - pts[0][1]) : null;
+}
+
+function fmtDelta(dv) {
+    const c = dv <= -3 ? 'var(--danger, #dc2626)' : (dv < 0 ? '#f59e0b' : 'var(--success, #22c55e)');
+    return `<span class="hc-delta" style="color:${c}">${dv > 0 ? '+' : ''}${dv.toFixed(1)} дБ</span>`;
+}
+
+function histCard(k, pts, addr, showDelta) {
+    const lv = pts.length ? pts[pts.length - 1][1] : null;
+    const lc = lv === null ? 'var(--text-muted, #888)'
+        : (lv > -25 ? 'var(--success, #22c55e)' : (lv >= -30 ? '#f59e0b' : 'var(--danger, #dc2626)'));
+    const dv = showDelta ? deltaOf({ [k]: pts }, k) : null;
+    return `<div class="hist-card">
+        <div class="hc-top"><b>${k}</b>${dv !== null ? fmtDelta(dv) : ''}</div>
+        <div class="hc-addr2">${addr[k] || '—'}</div>
+        <div class="hc-svg">${pts.length > 1 ? sparkSVG(pts, 240, 46) : '<span class="text-muted small">нет данных</span>'}</div>${pts.length > 1 ? `<div class="hc-dates"><span>${fdt(pts[0][0])}</span><span>→</span><span>${fdt(pts[pts.length - 1][0])}</span></div>` : ''}
+        <div class="hc-rx" style="color:${lc}">${lv === null ? '' : lv.toFixed(1) + ' дБм'}</div>
+    </div>`;
+}
+
+function renderHistGrid(hist) {
+    window._histData = hist;
+    if (histView === 'list') return renderHistTable(hist);
+    const grid = document.getElementById('histGrid');
+    const addr = window._histAddr || {};
+    const { flt, chTop } = histControls();
+    const keys = histFilterKeys(hist, addr, flt);
+    if (!keys.length) { grid.innerHTML = '<span class="text-muted">Ничего не найдено</span>'; return; }
+    if (chTop) {
+        // худшие просадки сигнала сверху, плоский список
+        keys.sort((a, b) => {
+            const da = deltaOf(hist, a), db = deltaOf(hist, b);
+            return (da === null ? 999 : da) - (db === null ? 999 : db);
+        });
+        let html = '<div class="hist-port-body">';
+        for (const k of keys) html += histCard(k, hist[k], addr, true);
+        grid.innerHTML = html + '</div>';
+        return;
+    }
+    const ports = new Map();
+    for (const k of keys) {
+        const p = k.split(':')[0];
+        if (!ports.has(p)) ports.set(p, []);
+        ports.get(p).push(k);
+    }
+    const LS = 'snmpHistCollapsed_' + deviceId;
+    window._histLS = LS;
+    let collapsed = new Set();
+    try { collapsed = new Set(JSON.parse(localStorage.getItem(LS) || '[]')); } catch (e) {}
+    let html = '';
+    for (const p of [...ports.keys()].sort(cmpPort)) {
+        const ks = ports.get(p).sort(cmpIface);
+        const isCol = collapsed.has(p);
+        html += `<div class="hist-port-head" onclick="toggleHistPort('${p}')">
+            <i class="fas fa-chevron-down me-2 chev ${isCol ? 'collapsed-chev' : ''}"></i>
+            <b>${p}</b> <span class="text-muted small">(${ks.length} ONU)</span></div>
+            <div class="hist-port-body" data-port="${p}" style="${isCol ? 'display:none' : ''}">`;
+        for (const k of ks) {
+            const pts = hist[k];
+            const lv = pts.length ? pts[pts.length - 1][1] : null;
+            const lc = lv === null ? 'var(--text-muted, #888)'
+                : (lv > -25 ? 'var(--success, #22c55e)' : (lv >= -30 ? '#f59e0b' : 'var(--danger, #dc2626)'));
+            html += `<div class="hist-card">
+                <div class="hc-top"><b>${k}</b><span class="hc-addr">${(addr[k] || '').slice(0, 24) || '—'}</span></div>
+                <div class="hc-svg">${pts.length > 1 ? sparkSVG(pts, 240, 46) : '<span class="text-muted small">нет данных</span>'}</div>${pts.length > 1 ? `<div class="hc-dates"><span>${fdt(pts[0][0])}</span><span>→</span><span>${fdt(pts[pts.length - 1][0])}</span></div>` : ''}
+                <div class="hc-rx" style="color:${lc}">${lv === null ? '' : lv.toFixed(1) + ' дБм'}</div>
+            </div>`;
+        }
+        html += '</div>';
+    }
+    grid.innerHTML = html || '<span class="text-muted">Нет данных</span>';
+}
+
+function toggleHistPort(p) {
+    const body = document.querySelector(`.hist-port-body[data-port="${p}"], .hist-tbl-rows[data-port="${p}"]`);
+    if (!body) return;
+    const chev = body.previousElementSibling.querySelector('.chev');
+    const show = body.style.display === 'none';
+    body.style.display = show ? '' : 'none';
+    if (chev) chev.classList.toggle('collapsed-chev', !show);
+    try {
+        const LS = window._histLS;
+        let arr = JSON.parse(localStorage.getItem(LS) || '[]');
+        arr = show ? arr.filter(x => x !== p) : [...new Set([...arr, p])];
+        localStorage.setItem(LS, JSON.stringify(arr));
+    } catch (e) {}
+}
+
+function closeHistoryAndPoll() {
+    if (histModal) histModal.hide();
+    startStream();
+}
+
+function setBusy(b) {
+    streaming = b;
+    document.getElementById('btnPoll').disabled = b;
+    document.getElementById('btnRefresh').disabled = b;
+    const pw = document.getElementById('progressWrap');
+    const pb = document.getElementById('progressBar');
+    if (b) {
+        pw.style.display = '';
+        pb.style.background = 'var(--success, #22c55e)';
+        pb.classList.add('indeterminate');
+        pb.style.width = '30%';
+        document.getElementById('progressText').textContent = 'Подключение к OLT, обход интерфейсов...';
+    } else {
+        pb.classList.remove('indeterminate');
+        setTimeout(() => { pw.style.display = 'none'; }, 2500);
+    }
+}
+
+function renderPorts(ports) {
+    let html = `<div class="table-responsive"><table class="table table-sm align-middle">
+        <thead><tr><th>Интерфейс</th><th>Статус</th><th>Вход (Мбит/с)</th><th>Исход (Мбит/с)</th></tr></thead><tbody>`;
+    ports.forEach(p => {
+        html += `<tr><td class="fw-bold">${p.iface}</td>
+            <td>${p.up === true ? '<span class="badge bg-success">Up</span>' : p.up === false ? '<span class="badge bg-danger">Down</span>' : '<span class="badge bg-secondary">?</span>'}</td>
+            <td>${p.in_mbps}</td><td>${p.out_mbps}</td></tr>`;
+    });
+    document.getElementById('scanResult').innerHTML = html + '</tbody></table></div>';
+}
+
+function showErr(msg) {
+    document.getElementById('scanResult').innerHTML =
+        `<div style="color: var(--danger); background: var(--bg-card); border: 1px solid var(--danger); border-radius: 6px; padding: 10px;">${msg}</div>`;
+}
+
+function knownCount() {
+    let n = 0;
+    for (const r of rowsMap.values()) if (r.up !== undefined || r.mac) n++;
+    return n;
+}
+
+function startStream() {
+    if (streaming) return;
+    setBusy(true);
+    clearRows();
+    setMeta('Подключение к OLT...');
+    es = new EventSource(`/api/snmp_scan_stream/${deviceId}`);
+    es.addEventListener('init', (ev) => {
+        const d = JSON.parse(ev.data);
+        if (d.type === 'ports') { renderPorts(d.ports); setMeta(d.total + ' портов...'); return; }
+        totalExpected = d.total;
+        d.onus.forEach(o => upsertRow(o.iface, { address: o.address }, true));
+        afterBatch();
+        setMeta(`Получено 0 из ${totalExpected} ONU...`);
+        updateProgress(0, totalExpected);
+    });
+    es.addEventListener('rows', (ev) => {
+        const d = JSON.parse(ev.data);
+        d.rows.forEach(r => upsertRow(r.iface, r, true));
+        afterBatch();
+        const kn = knownCount();
+        setMeta(`Получено ${kn} из ${totalExpected} ONU...`);
+        updateProgress(kn, totalExpected);
+    });
+    es.addEventListener('done', (ev) => {
+        const d = JSON.parse(ev.data);
+        setMeta(d.note + ' · опрос завершён');
+        const pb = document.getElementById('progressBar');
+        pb.classList.remove('indeterminate');
+        pb.style.width = '100%';
+        document.getElementById('progressText').textContent = d.note + ' · опрос завершён';
+        const off = d.offline || {};
+        for (const [k, v] of Object.entries(off)) {
+            const r = rowsMap.get(k);
+            if (r) r.offline = v;
+        }
+        // опрос завершён: неполученные значения — не «…», а «—» (нет данных)
+        for (const [k, tr] of rowEls) {
+            const r = rowsMap.get(k) || {};
+            if (r.up === undefined || r.up === null) tr.children[3].textContent = '—';
+            if (typeof r.tx !== 'number') tr.children[4].textContent = '—';
+            if (typeof r.rx !== 'number') tr.children[5].textContent = '—';
+        }
+        es.close(); setBusy(false); afterBatch();
+        loadRxHist();
+    });
+    es.addEventListener('error_evt', (ev) => {
+        const d = JSON.parse(ev.data);
+        setMeta(''); showErr('Ошибка опроса: ' + (d.message || 'неизвестно'));
+        const pb = document.getElementById('progressBar');
+        pb.classList.remove('indeterminate');
+        pb.style.background = 'var(--danger, #dc2626)';
+        pb.style.width = '100%';
+        document.getElementById('progressText').textContent = 'Ошибка опроса';
+        es.close(); setBusy(false);
+    });
+    es.onerror = () => {
+        if (streaming) { setMeta('Соединение прервано.'); es.close(); setBusy(false); }
+    };
+}
+
+async function loadScan(force) {
+    if (streaming) return;
+    setBusy(true);
+    setMeta(force ? 'Живой SNMP-опрос (до минуты)...' : 'Загрузка данных...');
+    try {
+        const resp = await fetch(`/api/snmp_scan/${deviceId}?force=${force ? 1 : 0}`);
+        const data = await resp.json();
+        if (data.status !== 'ok') { showErr(data.message || 'Ошибка'); return; }
+        const d = data.data;
+        setMeta(d.note + (d.cached ? ` · из кэша (${d.age || 0} с назад)` : ' · живой опрос'));
+        clearRows();
+        if (d.onus && d.onus.length) { d.onus.forEach(o => upsertRow(o.iface, o)); }
+        else if (d.ports && d.ports.length) { renderPorts(d.ports); }
+        else { showErr('Нет данных'); }
+        afterBatch();
+        loadRxHist();
+    } catch (e) {
+        showErr('Ошибка: ' + e);
+    } finally {
+        setBusy(false);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => loadScan(false));
+</script>
+{% endblock %}

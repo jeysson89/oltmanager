@@ -39,6 +39,33 @@
     </div>
 </div>
 
+<!-- Модальное окно живого просмотра мониторинга -->
+<div class="modal fade" id="monitorLiveModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Мониторинг <span id="mlvTarget"></span></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" onclick="stopLiveView()"></button>
+            </div>
+            <div class="modal-body">
+                <div class="d-flex justify-content-between align-items-center">
+                    <span class="badge bg-warning text-dark" id="mlvStatus">выполняется</span>
+                    <button class="btn btn-sm btn-outline-danger" id="mlvStopBtn" onclick="stopTaskFromModal()">Остановить</button>
+                </div>
+                <div class="progress mt-2" style="height: 6px;">
+                    <div class="progress-bar bg-warning" id="mlvProgressBar" style="width: 0%"></div>
+                </div>
+                <div class="small text-muted mt-1" id="mlvInfo"></div>
+                <div class="small mt-1" id="mlvLast"></div>
+                <div class="small mt-2" id="mlvHistory" style="max-height: 220px; overflow-y: auto;"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" onclick="stopLiveView()">Закрыть</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Модальное окно для повторного запуска -->
 <div class="modal fade" id="restartMonitorModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog">
@@ -85,7 +112,7 @@
                 data.tasks.forEach(task => {
                     const row = document.createElement('tr');
                     const shortId = task.task_id.substring(0, 8) + '...';
-                    const statusBadge = task.status === 'running' ? 'bg-warning text-dark' : 'bg-success';
+                    const statusBadge = task.status === 'running' ? 'bg-warning text-dark' : task.status === 'interrupted' ? 'bg-secondary' : task.status === 'error' ? 'bg-danger' : 'bg-success';
                     const remaining = task.remaining > 0 ? task.remaining + ' сек' : '—';
                     let progressBar = '';
                     if (task.status === 'running') {
@@ -107,9 +134,11 @@
                         <td>${progressBar}</td>
                         <td>${remaining}</td>
                         <td>
-                            ${task.status === 'done' ? `<button class="btn btn-sm btn-primary" onclick="showResult('${task.task_id}', ${task.device_id})">Результат</button>` : ''}
+                            ${task.status !== 'running' && task.has_result ? `<button class="btn btn-sm btn-primary" onclick="showResult('${task.task_id}', ${task.device_id})">Результат</button>` : ''}
+                            ${task.status === 'running' ? `<button class="btn btn-sm btn-info" onclick="openLiveView('${task.task_id}', ${task.device_id})">Просмотр</button>
+                            <button class="btn btn-sm btn-outline-danger" onclick="stopTask('${task.task_id}', ${task.device_id})">Остановить</button>` : ''}
                             ${task.status !== 'running' ? `<button class="btn btn-sm btn-warning" onclick="openRestartModal('${task.task_id}', ${task.device_id})">Повторить</button>` : ''}
-                            <button class="btn btn-sm btn-danger" onclick="deleteTask('${task.task_id}')">Удалить</button>
+                            <button class="btn btn-sm btn-outline-secondary" onclick="deleteTask('${task.task_id}')">Удалить</button>
                         </td>
                     `;
                     tbody.appendChild(row);
@@ -201,6 +230,90 @@
                 }
             })
             .catch(error => alert('Ошибка удаления: ' + error.message));
+    }
+
+    // Живой просмотр мониторинга
+    let _lvPoll = null, _lvTask = null;
+
+    function openLiveView(taskId, devId) {
+        _lvTask = { taskId, devId };
+        document.getElementById('mlvTarget').textContent = taskId.substring(0, 8) + '…';
+        const modal = new bootstrap.Modal(document.getElementById('monitorLiveModal'));
+        modal.show();
+        if (_lvPoll) clearInterval(_lvPoll);
+        liveViewTick();
+        _lvPoll = setInterval(liveViewTick, 3000);
+    }
+
+    function stopLiveView() {
+        if (_lvPoll) { clearInterval(_lvPoll); _lvPoll = null; }
+        _lvTask = null;
+    }
+
+    function lvFmtDur(sec) {
+        sec = Math.max(0, Math.round(sec));
+        const m = Math.floor(sec / 60), s = sec % 60;
+        return m > 0 ? `${m} мин ${s} с` : `${s} с`;
+    }
+
+    async function liveViewTick() {
+        if (!_lvTask) return;
+        try {
+            const resp = await fetch(`/api/device/${_lvTask.devId}/monitor_status/${_lvTask.taskId}`);
+            const data = await resp.json();
+            if (data.status === 'error') { stopLiveView(); updateMonitoringTable(); return; }
+            document.getElementById('mlvTarget').textContent = `${data.interface}:${data.onu_id}`;
+            const total = (data.duration || 1) * 60;
+            const percent = Math.min(100, (data.elapsed / total) * 100);
+            const bar = document.getElementById('mlvProgressBar');
+            bar.style.width = percent + '%';
+            bar.className = 'progress-bar ' + (data.status === 'running' ? 'bg-warning' : 'bg-success');
+            const badge = document.getElementById('mlvStatus');
+            badge.className = 'badge ' + (data.status === 'running' ? 'bg-warning text-dark' : data.status === 'done' ? 'bg-success' : 'bg-secondary');
+            badge.textContent = data.status === 'running' ? 'выполняется' : data.status === 'done' ? 'завершён' : 'остановлен';
+            document.getElementById('mlvStopBtn').style.display = data.status === 'running' ? '' : 'none';
+            document.getElementById('mlvInfo').textContent =
+                `прошло ${lvFmtDur(data.elapsed)} · осталось ${data.status === 'running' ? lvFmtDur(data.remaining) : '—'} · снимков: ${data.samples}` +
+                (data.last_update ? ` · обновлён ${data.last_update}` : '');
+            const last = data.last;
+            const lastDiv = document.getElementById('mlvLast');
+            if (last && !last.error) {
+                lastDiv.innerHTML = `<span>Сигнал: ${last.signal !== null && last.signal !== undefined ? last.signal : '—'}</span>` +
+                    `<span class="ms-3">Температура: ${last.temperature !== null && last.temperature !== undefined ? last.temperature : '—'}</span>` +
+                    `<span class="ms-3">LAN: ${last.lan_state || '—'}</span>` +
+                    `<span class="ms-3">MAC: ${Array.isArray(last.macs) ? last.macs.length : 0}</span>`;
+            } else if (last && last.error) {
+                lastDiv.innerHTML = `<span class="text-danger">Ошибка опроса: ${last.error}</span>`;
+            } else lastDiv.textContent = 'Ожидание первого снимка…';
+            const hist = document.getElementById('mlvHistory');
+            if (data.history && data.history.length) {
+                let rows = '<table class="table table-sm table-striped mb-0"><thead><tr><th>Время</th><th>Сигнал</th><th>Темп.</th><th>LAN</th><th>MAC</th></tr></thead><tbody>';
+                data.history.slice().reverse().forEach(h => {
+                    rows += h.error
+                        ? `<tr><td>${h.t}</td><td colspan="4" class="text-danger">${h.error}</td></tr>`
+                        : `<tr><td>${h.t}</td><td>${h.signal !== null && h.signal !== undefined ? h.signal : '—'}</td><td>${h.temperature !== null && h.temperature !== undefined ? h.temperature : '—'}</td><td>${h.lan_state || '—'}</td><td>${h.macs}</td></tr>`;
+                });
+                hist.innerHTML = rows + '</tbody></table>';
+            } else hist.innerHTML = '';
+            if (data.status !== 'running') {
+                stopLiveView();
+                updateMonitoringTable();
+            }
+        } catch (e) { console.error('liveView:', e); }
+    }
+
+    async function stopTask(taskId, devId) {
+        if (!confirm('Остановить мониторинг?')) return;
+        try {
+            const resp = await fetch(`/api/device/${devId}/monitor_stop/${taskId}`, { method: 'POST' });
+            const data = await resp.json();
+            alert(data.message || (data.status === 'ok' ? 'Остановлено' : 'Ошибка'));
+            if (data.status === 'ok') updateMonitoringTable();
+        } catch (e) { alert('Ошибка: ' + e.message); }
+    }
+
+    function stopTaskFromModal() {
+        if (_lvTask) stopTask(_lvTask.taskId, _lvTask.devId);
     }
 
     // Обновляем таблицу каждые 3 секунды

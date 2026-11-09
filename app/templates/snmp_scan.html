@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-2">
+    <h2 class="mb-0"><i class="fas fa-satellite-dish me-2"></i>SNMP-опросник</h2>
+</div>
+<p class="text-muted small mb-3">Живой SNMP-опрос ONU по всем PON-портам: интерфейс, MAC, адрес, статус, TX/RX. Нажмите «Опросить» у устройства.</p>
+<style>
+tr.row-dev-down > td { background-color: var(--danger-glow, rgba(220, 38, 38, 0.15)) !important; }
+</style>
+<div class="table-responsive">
+<table class="table table-hover align-middle">
+    <thead><tr><th>Устройство</th><th>IP</th><th>Тип</th><th>Статус</th><th></th></tr></thead>
+    <tbody>
+    {% for device in devices %}
+        <tr data-device="{{ device.id }}">
+            <td class="fw-bold">{{ device.name }}</td>
+            <td>{{ device.ip }}</td>
+            <td><span class="badge {% if device.device_type == 'gpon' %}bg-danger{% elif device.device_type == 'vsol' %}bg-info{% else %}bg-primary{% endif %}">{{ device.device_type|upper }}</span></td>
+            <td class="dev-status"><span class="badge bg-secondary">...</span></td>
+            <td class="text-end">
+                <a href="{{ url_for('main.snmp_scan_device', device_id=device.id) }}" class="btn btn-sm btn-outline-primary">
+                    <i class="fas fa-poll"></i> Опросить
+                </a>
+            </td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+</div>
+
+<script>
+let deviceStatusTimer = null;
+
+async function refreshDeviceStatus() {
+    try {
+        const resp = await fetch('/api/device_status');
+        const st = await resp.json();
+        document.querySelectorAll('tr[data-device]').forEach(tr => {
+            const id = tr.dataset.device;
+            const cell = tr.querySelector('.dev-status');
+            const s = st[id];
+            if (s && s.status === 'down') {
+                tr.classList.add('row-dev-down');
+                cell.innerHTML = '<span class="badge bg-danger">Выключен</span>';
+            } else if (s && s.status === 'up') {
+                tr.classList.remove('row-dev-down');
+                cell.innerHTML = '<span class="badge bg-success">В сети</span>';
+            } else {
+                tr.classList.remove('row-dev-down');
+                cell.innerHTML = '<span class="badge bg-secondary">Нет данных</span>';
+            }
+        });
+    } catch (e) {}
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    refreshDeviceStatus();
+    deviceStatusTimer = setInterval(refreshDeviceStatus, 30000);
+});
+</script>
+{% endblock %}
